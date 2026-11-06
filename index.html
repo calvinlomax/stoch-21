@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Blackjack Lab — simulator</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+
+    <header>
+      <div class="brand">
+        <div class="brand-mark">♠
+        </div> BLACKJACK <span>LAB</span>
+      </div>
+      <div class="head-right"><span class="pill subtle">DISCRETE MONTE CARLO</span><span class="pill"><i class="dot" id="statusDot"></i><span id="status">Ready</span></span>
+      </div>
+    </header>
+
+    <div class="layout">
+      <aside class="sidebar">
+        <div class="side-title">Simulation setup
+        </div>
+        <div class="side-sub">Choose your inputs, then start a new simulation. Changes apply to the next run.
+        </div>
+
+        <div class="group-title">Shoe &amp; table
+        </div>
+        <div class="fields">
+          <div class="field"><label for="decks">Decks</label><select id="decks"></select>
+          </div>
+          <div class="field">
+            <div class="field-label"><label for="penetrationMode">Penetration %</label><button id="penInfo" class="info-button" type="button" aria-label="About deck penetration" aria-haspopup="dialog">ⓘ</button>
+            </div>
+
+            <div id="penetrationControl" class="penetration-control numeric">
+<input type="number" id="penetration" aria-label="Fixed cut-card percentage" value="75" min="20" max="95" step="0.1">
+<input type="number" id="penetrationSigma" aria-label="Standard deviation in percentage points" value="3" min="0" max="30" step="0.1" hidden>
+<select id="penetrationMode" aria-label="Penetration mode"><option value="fixed">Fixed</option><option value="simulated">Simulated</option><option value="gaussian">Gaussian</option></select>
+
+            </div><small id="penetrationHint">Fixed cut target</small>
+          </div>
+        </div>
+        <div class="fields" style="margin-top:10px">
+          <div class="field"><label for="minBet">Table minimum $</label><input type="number" id="minBet" value="10" min="1" max="1000000" step="1">
+          </div>
+          <div class="field"><label for="baseBet">Base wager $</label><input type="number" id="baseBet" value="25" min="1" max="1000000" step="1">
+          </div>
+        </div>
+
+        <div class="divider">
+        </div>
+        <div class="group-title">Players
+        </div>
+        <div class="field"><label for="starting">Default starting balance $</label><input type="number" id="starting" value="10000" min="1" max="100000000" step="1"><small>Leave a seat’s balance blank to use this amount.</small>
+        </div>
+        <div id="seatConfig">
+        </div><label class="toggle"><input type="checkbox" id="finite" checked><span>Enforce bankroll limits</span></label>
+
+        <div class="divider">
+        </div>
+        <div class="group-title">Rules &amp; strategy
+        </div>
+        <div class="field"><label for="strategy">Strategy for your seat</label><select id="strategy"><option value="basic">Basic-strategy table</option><option value="mimic">Dealer mimic: stand on 17</option><option value="stand">Always stand</option></select><small>This policy applies to all seats when variable opponents are off.</small>
+        </div>
+        <div class="fields">
+          <div class="field"><label for="dealerRule">Dealer soft 17</label><select id="dealerRule"><option value="S17">Stand</option><option value="H17">Hit</option></select>
+          </div>
+          <div class="field"><label for="pay">Blackjack pays</label><select id="pay"><option value="1.5">3 : 2</option><option value="1.2">6 : 5</option></select>
+          </div>
+        </div>
+        <div class="field" style="margin-top:10px"><label for="betMode">Bet sizing</label><select id="betMode"><option value="flat">Flat wager</option><option value="count">Hi-Lo true-count spread</option></select>
+        </div>
+        <div class="field" id="spreadField" style="display:none"><label for="spread">Maximum bet multiplier</label><input id="spread" type="number" value="4" min="1" max="20" step="1"><small>Multiplier = clamp(floor(true count), 1, maximum).</small>
+        </div><label class="toggle"><input type="checkbox" id="showCount" checked><span>Show Hi-Lo count &amp; card effects</span></label>
+<label class="toggle"><input type="checkbox" id="humanOpponents" checked><span>Model different opponent skill levels and streak betting</span></label>
+        <div class="divider">
+        </div>
+        <div class="group-title">Run parameters
+        </div>
+        <div class="fields">
+          <div class="field"><label for="sessions">Sessions</label><input id="sessions" type="number" value="1" min="1" max="500" step="1">
+          </div>
+          <div class="field"><label for="rounds">Rounds / session</label><input id="rounds" type="number" value="500" min="1" max="100000" step="1">
+          </div>
+        </div>
+        <div class="fields" style="margin-top:10px">
+          <div class="field"><label for="seed">Random seed</label><input id="seed" type="number" placeholder="Random" min="0" max="4294967295" step="1">
+          </div>
+          <div class="field"><label for="displayMode">Display mode</label><select id="displayMode"><option value="animated">Animated</option><option value="stepped">Periodic</option><option value="final">Final only</option></select>
+          </div>
+        </div>
+        <div class="field" id="stepField" style="margin-top:10px" hidden><label for="stepInterval" class="step-label">Show every <input id="stepInterval" type="number" value="10" min="1" step="1"> steps</label></div>
+        <div class="note" style="margin-top:9px">Leave the seed blank for a fresh run, or enter a seed to reproduce one.
+        </div>
+        <div class="settings-warning" id="dirty">Setup changed. Stop and start a new simulation to apply.
+        </div>
+
+      </aside>
+      <main class="content">
+        <div class="main-head">
+          <div>
+            <div class="eyebrow">SIMULATION WORKSPACE
+            </div>
+            <h1>Blackjack simulator
+            </h1>
+            <p>Configure the table. Run the experiment. Follow the data.
+            </p>
+          </div>
+          <div>
+            <div class="actions"><button class="button primary" id="start">▶ &nbsp; Start simulation</button><button type="button" id="playbackSpeed" class="button" aria-label="Animation speed: 1x. Click to change speed.">1x</button><button class="button" id="pause" disabled>Ⅱ &nbsp; Pause</button><button class="button" id="stop" disabled>■ &nbsp; Stop</button><button class="button" id="export" disabled>↓ &nbsp; Export CSV</button>
+            </div>
+            <div class="alert" id="error" role="status">
+            </div>
+          </div>
+        </div>
+
+        <div class="metrics">
+          <div class="stat">
+            <div class="stat-label">Rounds simulated
+            </div>
+            <div class="stat-value" id="roundMetric">0
+            </div>
+            <div class="stat-meta" id="progress">No simulation running
+            </div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Player hands
+            </div>
+            <div class="stat-value" id="handsMetric">0
+            </div>
+            <div class="stat-meta">Including split hands
+            </div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Net player result
+            </div>
+            <div class="stat-value" id="profitMetric">$0
+            </div>
+            <div class="stat-meta">All seats · all sessions
+            </div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Return on wager
+            </div>
+            <div class="stat-value" id="roiMetric">—
+            </div>
+            <div class="stat-meta">Net result ÷ total wager
+            </div>
+          </div>
+        </div>
+
+        <section class="card-panel">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title">Table view
+              </div>
+              <div class="panel-caption" id="tableCaption">Your configured seats · cards appear when the simulation starts
+              </div>
+            </div><span class="info-pill" id="sessionTag">READY</span>
+          </div>
+          <div class="table-wrap">
+            <div class="table-stage">
+              <div class="felt" id="felt">
+                <div class="felt-label">BLACKJACK LAB
+                </div>
+                <div class="dealer"><span>DEALER</span><span class="dscore" id="dealerScore">—</span>
+                  <div class="cards" id="dealerCards">
+                  </div>
+                </div>
+                <div class="shoe">
+                  <div class="shoe-stack">
+                  </div>
+                  <div class="shoe-copy">SHOE <b id="shoeDisplay">312 cards</b><span id="tableCount">Hi-Lo 0</span>
+                  </div>
+                </div>
+                <div class="dealer-hand" id="dealerHand" aria-hidden="true"><svg viewBox="0 0 100 110"><path d="M60 0 L90 0 L88 25 L99 50 L92 67 L82 66 L76 78 L66 76 L60 87 Q55 91 50 86 L48 76 L42 81 Q36 83 33 77 L34 66 L28 69 Q22 70 20 64 Q19 60 25 54 L47 31 Q54 23 57 15 Z" fill="#d7af9e" stroke="#99766e" stroke-width="2"/><path d="M27 55 L45 43 M35 64 L51 51 M46 70 L59 57" fill="none" stroke="#ae8879" stroke-width="2"/><path d="M59 0 H91 L88 17 H57 Z" fill="#222736"/><path d="M58 17 H89 V22 H57 Z" fill="#ececf2"/></svg>
+                </div>
+                <div id="seats">
+                </div>
+              </div>
+            </div>
+            <div class="table-footer"><span>SHOE <b id="shoeFooter">6 decks</b></span><span>CUT CARD <b id="cutDisplay">—</b></span><span>RUN SEED <b id="seedUsed">—</b></span><span>RUNNING COUNT <b id="countFooter">0</b></span><span>TRUE COUNT <b id="trueCount">0.00</b></span><span>LAST ROUND <b id="roundResult">—</b></span>
+            </div>
+          </div>
+        </section>
+
+        <div class="lower">
+          <section class="card-panel">
+            <div class="panel-header">
+              <div>
+                <div class="panel-title">Session bankroll path
+                </div>
+                <div class="panel-caption">Combined player profit or loss · current session
+                </div>
+              </div>
+              <div class="graph-key"><span class="key-dot"></span> Net result
+              </div>
+            </div>
+            <div class="graph"><canvas id="equityChart" aria-label="Graph of player profit by round"></canvas>
+            </div>
+          </section>
+          <section class="card-panel">
+            <div class="panel-header">
+              <div>
+                <div class="panel-title">Hand outcomes
+                </div>
+                <div class="panel-caption">Share of settled player hands
+                </div>
+              </div>
+            </div>
+            <div class="results-body">
+              <div class="outcome-bar"><span id="winBar" style="background:#7564d8"></span><span id="lossBar" style="background:#dc94a2"></span><span id="pushBar" style="background:#cbd0dc"></span>
+              </div>
+              <div class="result-row"><span><i class="swatch"></i>Wins <span class="note">· includes blackjacks</span></span><strong id="winStat">—</strong>
+              </div>
+              <div class="result-row"><span><i class="swatch loss"></i>Losses</span><strong id="lossStat">—</strong>
+              </div>
+              <div class="result-row"><span><i class="swatch push"></i>Pushes</span><strong id="pushStat">—</strong>
+              </div>
+              <div class="result-row"><span>Natural blackjacks <span class="note">· includes pushes</span></span><strong id="bjStat">—</strong>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div class="lower">
+          <section class="card-panel">
+            <div class="panel-header">
+              <div>
+                <div class="panel-title">Shoe probabilities
+                </div>
+                <div class="panel-caption" id="probCaption">Exact composition of the current complete shoe
+                </div>
+              </div><span class="info-pill">WITHOUT REPLACEMENT</span>
+            </div>
+            <div style="padding:0 19px 18px">
+              <div class="prob-grid">
+                <div class="prob"><small>Next card is ten-valued</small><strong id="tenProb">30.77%</strong><span class="formula">T / N</span>
+                </div>
+                <div class="prob"><small>Next card is an ace</small><strong id="aceProb">7.69%</strong><span class="formula">A / N</span>
+                </div>
+                <div class="prob"><small>Next two draws form blackjack</small><strong id="naturalProb">4.75%</strong><span class="formula">2AT / N(N−1)</span>
+                </div>
+              </div>
+              <div class="note" style="margin-top:10px">N = cards in shoe, A = aces, T = 10/J/Q/K. During animation, these figures stay at the last fully revealed round; a cut-card reshuffle changes them.
+              </div>
+            </div>
+          </section>
+          <section class="card-panel">
+            <div class="panel-header">
+              <div>
+                <div class="panel-title">Session results
+                </div>
+                <div class="panel-caption">Distribution of combined profit per completed session
+                </div>
+              </div>
+            </div>
+            <div class="graph" style="height:140px"><canvas id="histChart" aria-label="Histogram of session profit"></canvas>
+            </div>
+            <div style="padding:0 19px 14px;display:flex;justify-content:space-between;gap:8px;color:#838b9a;font-size:10px"><span>Completed <b id="sessionCount" style="color:#343c4c">0</b></span><span>Median <b id="median" style="color:#343c4c">—</b></span><span>Any seat below minimum <b id="ruin" style="color:#343c4c">—</b></span>
+            </div>
+          </section>
+        </div>
+
+        <section class="card-panel" style="margin-top:13px">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title">More statistics
+              </div>
+              <div class="panel-caption">Observed outcomes across the experiment
+              </div>
+            </div>
+          </div>
+          <div class="prob-grid" style="padding:0 19px 18px">
+            <div class="prob"><small>Total amount wagered</small><strong id="wagerStat">$0</strong><small>Includes split and double wagers</small>
+            </div>
+            <div class="prob"><small>Average net per player hand</small><strong id="handAvg">—</strong><small>Total net ÷ settled hands</small>
+            </div>
+            <div class="prob"><small>Player bust rate</small><strong id="playerBust">—</strong><small>Player busts ÷ settled hands</small>
+            </div>
+            <div class="prob"><small>Dealer bust rate</small><strong id="dealerBust">—</strong><small>Dealer bust rounds ÷ rounds</small>
+            </div>
+            <div class="prob"><small>95% interval for session ROI</small><strong id="ciStat" style="font-size:15px">Need 30 completed sessions</strong><small>Normal approximation · completed sessions</small>
+            </div>
+            <div class="prob"><small>Session result, 5th–95th percentile</small><strong id="rangeStat" style="font-size:15px">—</strong><small>Combined net · completed sessions</small>
+            </div>
+          </div>
+        </section>
+
+        <section class="card-panel" style="margin-top:13px">
+          <div class="panel-header">
+            <div>
+              <div class="panel-title">Cut-card and opponent diagnostics
+              </div>
+              <div class="panel-caption">Completed shoes and settled decisions
+              </div>
+            </div>
+          </div>
+          <div class="prob-grid" style="padding:0 19px 18px">
+
+            <div class="prob"><small>Mean target → realized</small><strong id="penResult">—</strong><small id="penSamples">No completed shoes</small>
+            </div>
+
+            <div class="prob"><small>Opponent strategy deviations</small><strong id="npcResult">—</strong><small>Share of opponent decisions</small>
+            </div>
+
+            <div class="prob"><small>Streak-influenced bets</small><strong id="biasResult">0</strong><small>Wagers raised by an opponent’s streak heuristic</small>
+            </div>
+
+          </div>
+        </section>
+
+        <div class="details">
+          <details>
+            <summary>Methodology, assumptions &amp; formulas
+            </summary>
+            <p><b>Model.</b> Seeded Monte Carlo draws randomly from a finite shoe of standard 52-card decks, without replacement. A new shuffled shoe is prepared between rounds after the configured penetration is reached. If a shoe runs out before the round can finish, the simulator refunds that round’s wagers, tracks the exhaustion separately and opens a fresh shoe. Each session resets player balances and starts a fresh shoe. If every seat cannot meet the minimum, that session ends early.
+            </p>
+            <p><b>Rules.</b> The dealer checks for blackjack, then follows the selected soft-17 rule. Players may double on their first two cards, split matching card values up to four hands, and double after splitting. Split aces receive one card each and cannot be resplit. Split 21 is not a natural blackjack. No surrender or insurance. A player without enough money to double or split uses the fallback decision. Stakes are capped at the available whole-dollar bankroll. No-limit mode permits negative balances.
+            </p>
+            <p><b>Strategy.</b> The basic-strategy option is a fixed multi-deck strategy table, with soft-17 adjustments. It is not optimized for every possible deck count, rule combination, bankroll constraint, or shoe composition. Dealer mimic and always stand are fixed comparison policies. With variable opponents enabled, the four opponent seats start from basic strategy and use different error rates on eligible decisions. After two consecutive profitable or losing rounds, some profiles sometimes increase the next stake, up to double, subject to the bankroll. Break-even rounds leave the streak unchanged. These are illustrative behaviors. The optional Hi-Lo spread sizes a bet at the start of each round using floor(running count ÷ decks remaining), clamped from 1 to the maximum multiplier. True count = running count ÷ (cards remaining / 52). Displaying the count and using it for betting are separate settings.
+            </p>
+            <p><b>Estimates.</b> Win / loss / push shares use settled hands as the denominator. ROI = total player net profit ÷ total amount wagered, including added split and double stakes. Natural blackjack count includes pushes. The bankroll graph is for the current session; statistics pool all sessions. The histogram, median, and 5th–95th percentiles use completed sessions. After at least 30 completed sessions, the 95% session-ROI interval uses a normal approximation and a session-level ratio-estimator standard error. Let X be session profit, Y session wager, R = ΣX/ΣY, and Z = X − RY. The interval is R ± 1.96 × s(Z)/(√sessions × mean(Y)). This accounts for dependence within each session; it remains an approximation and may be unreliable for skewed outcomes or few sessions. “Any seat below minimum” counts sessions ending with at least one seat unable to make the table minimum. Outcomes within a shoe and hands sharing a dealer are dependent, so the displayed rates are estimates, not exact theoretical house-edge values. Brownian motion is not used: discrete card draws and blackjack payoffs are modeled directly.
+            </p>
+          </details>
+        </div>
+        <div class="foot">For analysis and education · No real-money play · <a href="https://github.com/MattCain/svg-playing-cards" target="_blank" rel="noreferrer">Card artwork credits</a>
+        </div>
+      </main>
+    </div>
+
+    <dialog id="penDialog" class="pen-dialog" aria-labelledby="penTitle">
+
+      <h2 id="penTitle">Deck penetration
+      </h2>
+
+      <p>Penetration is the share of the shoe dealt before the dealer shuffles. Deeper penetration gives the remaining cards more time to differ from a fresh shoe, which can make information from the running count more useful.
+      </p>
+
+      <p>All three modes place a cut card. A round can pass that card and still finish, so realized penetration can exceed the target. Let <i>D</i> be the deck count, <i>N</i> the shoe size, <i>C</i> the cut position, and <i>Xᵢ</i> the number of cards dealt in round <i>i</i>.
+      </p>
+<math display="block"><semantics><mrow><mi>N</mi><mo>=</mo><mn>52</mn><mi>D</mi><mo>,</mo><mspace width="1em"/><mi>C</mi><mo>=</mo><mo>⌈</mo><mi>N</mi><msub><mi>p</mi><mi>cut</mi></msub><mo>⌉</mo></mrow><annotation encoding="application/x-tex">N=52D,\quad C=\lceil Np_{\mathrm{cut}}\rceil</annotation></semantics></math>
+
+      <h3>Fixed
+      </h3>
+      <p>Set the same cut percentage for every shoe. The default is 75%.
+      </p>
+<math display="block"><semantics><mrow><msub><mi>p</mi><mi>cut</mi></msub><mo>=</mo><mfrac><mi>q</mi><mn>100</mn></mfrac><mo>,</mo><mspace width="1em"/><mi>q</mi><mo>=</mo><mtext>entered percentage</mtext></mrow><annotation encoding="application/x-tex">p_{\mathrm{cut}}=q/100</annotation></semantics></math>
+
+      <h3>Simulated
+      </h3>
+      <p>The attached model samples a new cut position for each shoe. The simulator then deals actual blackjack rounds until the cut is reached. Player count, hits, splits and doubles all affect the overshoot.
+      </p>
+<math display="block"><semantics><mrow><msub><mi>p</mi><mi>cut</mi></msub><mo>∼</mo><mi>TN</mi><mo>(</mo><mn>0.75</mn><mo>,</mo><msup><mn>0.015</mn><mn>2</mn></msup><mo>;</mo><mn>0.70</mn><mo>,</mo><mn>0.80</mn><mo>)</mo></mrow><annotation encoding="application/x-tex">p_{\mathrm{cut}}\sim\mathrm{TN}(0.75,0.015^2;0.70,0.80)</annotation></semantics></math>
+
+      <h3>Gaussian
+      </h3>
+      <p>Draw a cut target centered at 75% with your chosen σ in percentage points. Redraw targets outside 20–95%. A σ of zero always selects 75%. At larger σ, the asymmetric bounds pull the accepted average below 75%.
+      </p>
+<math display="block"><semantics><mrow><msub><mi>p</mi><mi>cut</mi></msub><mo>∼</mo><mi>TN</mi><mo>(</mo><mn>0.75</mn><mo>,</mo><msup><mrow><mo>(</mo><mi>σ</mi><mo>/</mo><mn>100</mn><mo>)</mo></mrow><mn>2</mn></msup><mo>;</mo><mn>0.20</mn><mo>,</mo><mn>0.95</mn><mo>)</mo></mrow><annotation encoding="application/x-tex">p_{\mathrm{cut}}\sim\mathrm{TN}(0.75,(\sigma/100)^2;0.20,0.95)</annotation></semantics></math>
+
+      <h3>Realized penetration
+      </h3>
+      <p>TN denotes a truncated normal with the mean and variance of the underlying normal, followed by the acceptance bounds. The simulator measures penetration when the first round to reach the cut card finishes.
+      </p>
+<math display="block"><semantics><mrow><msub><mi>S</mi><mi>n</mi></msub><mo>=</mo><munderover><mo>∑</mo><mrow><mi>i</mi><mo>=</mo><mn>1</mn></mrow><mi>n</mi></munderover><msub><mi>X</mi><mi>i</mi></msub><mo>,</mo><mspace width="1em"/><mi>T</mi><mo>=</mo><mi>min</mi><mo>{</mo><mi>n</mi><mo>:</mo><msub><mi>S</mi><mi>n</mi></msub><mo>≥</mo><mi>C</mi><mo>}</mo><mo>,</mo><mspace width="1em"/><mi>P</mi><mo>=</mo><mn>100</mn><mo>%</mo><mo>×</mo><mfrac><msub><mi>S</mi><mi>T</mi></msub><mi>N</mi></mfrac></mrow><annotation encoding="application/x-tex">S_n=\sum_{i=1}^n X_i,\quad T=\min\{n:S_n\ge C\},\quad P=100\%\times S_T/N</annotation></semantics></math>
+
+      <p>Shoes that end with a session before reaching the cut are excluded from the averages. If the shoe runs out mid-round, wagers are refunded and that shoe is counted separately. A high exhaustion count means the displayed averages cover only the shoes that could finish their final round.
+      </p>
+
+      <form method="dialog"><button class="button primary">Close</button>
+      </form>
+    </dialog>
+  <script src="./script.js"></script>
+  </body>
+</html>
+
