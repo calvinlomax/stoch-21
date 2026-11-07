@@ -155,7 +155,7 @@
       if (key === 'starting') for (const seat of e.seats) seat.amount = '';
     }), { id: mode + '-' + key, ...settings }));
     fields.append(heading('h3', 'Shoe & table', 'counting'));
-    root('decks', 'Decks', 'number', { min: 1, max: 8, step: 1 }); root('penetration', 'Penetration %', 'number', { min: 20, max: 95, step: .1, category: 'counting' });
+    root('decks', 'Decks', 'number', { min: 1, max: 8, step: 1 }); root('penetration', 'Penetration %', 'number', { min: 20, max: 95, step: .0001, category: 'counting' });
     const rule = (group, key, label, opts) => fields.append(field(label, 'select', e.rules[group][key], value => updateEnvelope(e => e.rules[group][key] = value), { id: `${mode}-${group}-${key}`, options: opts, category: 'strategy' }));
     rule('dealer', 'mode', 'Dealer soft 17', { S17: 'Stand (S17)', H17: 'Hit (H17)', custom: 'Custom thresholds' });
     fields.append(field('Blackjack payout', 'select', String(e.rules.payout.numerator / e.rules.payout.denominator), value => updateEnvelope(e => e.rules.payout = { numerator: Number(value) * 100, denominator: 100 }), { options: { 1: '1 : 1', 1.2: '6 : 5', 1.5: '3 : 2', 2: '2 : 1', ...(![1, 1.2, 1.5, 2].includes(e.rules.payout.numerator / e.rules.payout.denominator) ? { [String(e.rules.payout.numerator / e.rules.payout.denominator)]: `${e.rules.payout.numerator / e.rules.payout.denominator} : 1` } : {}) }, category: 'strategy' }));
@@ -255,7 +255,19 @@
       if (!prompt) {
         bar.append(el('p', { class: 'game-result' }, g.result?.voided ? 'Round refunded after shoe exhaustion.' : g.result?.noRound ? 'No affordable wager remains.' : `Round ${g.stats.rounds} settled · ${money(g.sim.lastResult?.seats.find(p => p.seat === g.config.heroSeat)?.profit || 0)}`), button('Next hand', () => { g.startRound(); this.save(); this.refresh(); }, true));
       } else if (prompt.kind === 'bet') {
-        bar.append(heading('h3', 'Place your wager', 'betting'), el('p', {}, `Allowed range: $${prompt.minimum.toFixed(2)}–$${prompt.maximum.toFixed(2)} on the configured chip grid.`));
+        const wagerHeader = el('div', { class: 'wager-header' }), display = el('div', { class: 'segmented-control', role: 'group', 'aria-label': 'Table information' });
+        for (const [value, label] of [['off', 'Hide'], ['details', 'Details'], ['advice', 'Guidance']]) {
+          const choice = button(label, () => { opts.tableInfo = value; persist(); this.refresh(); }); choice.setAttribute('aria-pressed', (opts.tableInfo || 'details') === value); display.append(choice);
+        }
+        wagerHeader.append(heading('h3', 'Place your wager', 'betting'), display); bar.append(wagerHeader, el('p', {}, `Allowed range: $${prompt.minimum.toFixed(2)}–$${prompt.maximum.toFixed(2)} on the configured chip grid.`));
+        const balance = g.sim.players.find(p => p.seat === g.config.heroSeat)?.balance;
+        if (balance != null) bar.append(el('p', { class: 'wager-context' }, `Available bankroll: ${money(balance)} · Table minimum: ${money(g.config.minBet * 100)}`));
+        if (opts.tableInfo === 'advice') {
+          const snap = g.snapshot || g.sim.snap(null), rc = snap.count, tc = snap.remaining ? rc * 52 / snap.remaining : 0, shown = opts.countVisibility !== 'hidden' && g.config.countSystem !== 'none';
+          const count = !shown ? 'The count is hidden or disabled.' : opts.countVisibility === 'running' ? `Running count ${rc >= 0 ? '+' : ''}${rc}.` : `True count ${R.roundCount(tc, g.sim.rules.bet.tcRound).toFixed(2)}.`;
+          const relationship = prompt.suggested > g.config.baseBet ? 'above' : prompt.suggested < g.config.baseBet ? 'below' : 'equal to';
+          bar.append(el('p', { class: 'wager-guidance' }, `${count} Your selected betting strategy suggests ${money(prompt.suggested * 100)}, ${relationship} your ${money(g.config.baseBet * 100)} base wager. Use that amount or choose another legal wager; the count and remaining shoe do not guarantee a winning hand.`));
+        }
         const input = el('input', { id: 'play-wager', type: 'number', min: prompt.minimum, max: prompt.maximum, step: g.config.rules.limits.chip, value: prompt.suggested, 'aria-label': 'Your opening wager' });
         if (opts.betting === 'manual') bar.append(input, button('Deal', () => this.answer(Number(input.value)), true));
         else bar.append(el('p', {}, 'Selected strategy wager: ' + money(prompt.suggested * 100)), button('Deal strategy wager', () => this.answer(prompt.suggested), true));
@@ -285,7 +297,7 @@
       const g = this.game, opts = store.mode('play').options, rc = snapshot.count, tc = snapshot.remaining ? rc * 52 / snapshot.remaining : 0;
       const counts = opts.countVisibility === 'hidden' ? 'Count hidden' : (opts.countVisibility !== 'true' ? 'RC ' + rc : '') + (opts.countVisibility === 'both' ? ' · ' : '') + (opts.countVisibility !== 'running' ? 'TC ' + R.roundCount(tc, g.sim.rules.bet.tcRound).toFixed(2) : '');
       const player = snapshot.players.find(p => p.seat === g.config.heroSeat); if (player && this.bankMetric) this.bankMetric.querySelector('.stat-value').textContent = money(player.balance);
-      this.tableHost.replaceChildren(table(snapshot, g.config, g.prompt, false, counts));
+      const view = table(snapshot, g.config, g.prompt, false, counts); view.querySelector('.game-table-footer').hidden = opts.tableInfo === 'off'; this.tableHost.replaceChildren(view);
     }
     answer(value) {
       this.pause(); const g = this.game; g.answer(value); this.save(); const frames = g.frames; if (!frames.length) { this.refresh(); return; }
@@ -309,11 +321,13 @@
     const presetGroup = el('section', { class: 'dialog-section' }); root.append(presetGroup);
     const select = el('select', { id: 'modePreset', 'aria-label': 'Preset for this mode' }); select.append(el('option', { value: '' }, titles[current] + ' presets'));
     for (const name of Object.keys(m.presets)) select.append(el('option', { value: name }, name));
+    const sweep = el('optgroup', { label: 'Sweep examples · exploratory' }); for (const p of BJSweepPresets.presets) sweep.append(el('option', { value: 'sweep:' + p.id }, p.name)); select.append(sweep);
+    const presetDetails = el('p', { class: 'mode-copy preset-details', role: 'status' }); select.onchange = () => { const p = BJSweepPresets.presets.find(x => 'sweep:' + x.id === select.value); presetDetails.textContent = p ? BJSweepPresets.description(p) : ''; };
     const name = el('input', { id: 'modePresetName', placeholder: 'Preset name', maxlength: 80, 'aria-label': 'Mode preset name' });
     presetGroup.append(el('h3', {}, 'Mode presets'), info('Mode presets', infoText.storage, 'storage'), select, name,
       button('Save', () => { m.envelope = RuleSettings.capture(); store.preset(name.value); toolbar(); notice('Preset saved for ' + titles[current] + '.'); }),
-      button('Load', () => { store.loadPreset(select.value); syncEnvelope(); controllers[current]?.mount?.($('modeWorkspace')); toolbar(); }),
-      button('Delete', () => { if (!select.value) throw Error('Choose a preset first.'); delete m.presets[select.value]; persist(); toolbar(); }));
+      button('Load', () => { if (select.value.startsWith('sweep:')) { const p = BJSweepPresets.presets.find(x => 'sweep:' + x.id === select.value); m.envelope = RuleSettings.validateEnvelope(BJSweepPresets.apply(m.envelope, p.id)); notice(BJSweepPresets.description(p)); } else store.loadPreset(select.value); syncEnvelope(); controllers[current]?.mount?.($('modeWorkspace')); toolbar(); }),
+      button('Delete', () => { if (!select.value) throw Error('Choose a preset first.'); if (select.value.startsWith('sweep:')) throw Error('Built-in sweep presets cannot be deleted.'); delete m.presets[select.value]; persist(); toolbar(); }), presetDetails);
     const transferGroup = el('section', { class: 'dialog-section' }); transferGroup.append(el('h3', {}, 'Copy settings to another mode')); root.append(transferGroup);
     const target = el('select', { id: 'modeTransferTarget', 'aria-label': 'Configuration destination' });
     for (const mode of M.MODES) if (mode !== current) target.append(el('option', { value: mode }, titles[mode]));
@@ -333,7 +347,7 @@
     try { RuleSettings.applyEnvelope(store.mode(mode).envelope); } finally { suppress = false; }
     $('simulatorWorkspace').hidden = mode !== 'simulator'; $('modeWorkspace').hidden = mode === 'simulator';
     for (const b of document.querySelectorAll('.mode-tab')) { b.setAttribute('aria-selected', b.dataset.mode === mode); b.tabIndex = b.dataset.mode === mode ? 0 : -1; }
-    if (mode === 'simulator') { if (store.mode(mode).runtime) guarded(() => SimulatorBridge.restore(store.mode(mode).runtime)); else SimulatorBridge.refresh(); }
+    if (mode === 'simulator') { if (store.mode(mode).runtime) guarded(() => SimulatorBridge.restore(store.mode(mode).runtime)); else SimulatorBridge.refresh(); requestAnimationFrame(() => { if (current === 'simulator') SimulatorBridge.redrawCharts(); }); }
     else controllers[mode].mount($('modeWorkspace'));
     toolbar(); persist(); requestAnimationFrame(enhanceInfo);
   }
@@ -356,7 +370,8 @@
   nav.onkeydown = e => { if (!['ArrowLeft', 'ArrowRight'].includes(e.key)) return; e.preventDefault(); const tabs = [...nav.querySelectorAll('[role=tab]')], index = tabs.indexOf(document.activeElement); const next = tabs[(index + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length]; next.click(); next.focus(); };
   window.addEventListener('blackjack-settings-saved', () => { if (suppress) return; store.mode().envelope = RuleSettings.capture(); persist(); });
   $('advancedDialog').addEventListener('close', () => { if (current !== 'simulator') controllers[current].mount($('modeWorkspace')); });
-  window.addEventListener('resize', () => controllers[current]?.refreshCharts?.());
+  let resizeFrame = null;
+  window.addEventListener('resize', () => { if (resizeFrame) cancelAnimationFrame(resizeFrame); resizeFrame = requestAnimationFrame(() => { resizeFrame = null; if (current === 'laboratory' && controllers[current]?.stageIndex === 3) controllers[current].renderLive(); else controllers[current]?.refreshCharts?.(); }); });
   window.addEventListener('beforeunload', () => { if (resetting) return; controllers.play.save(); controllers.learn.save?.(); if (current === 'simulator') store.mode('simulator').runtime = SimulatorBridge.capture(); store.save(); });
   setInterval(() => { if (!resetting && current === 'simulator') { const value = SimulatorBridge.capture(), fingerprint = value ? value.state + ':' + value.simulation.state.stats.rounds + ':' + value.changed : ''; if (fingerprint !== savedSimFingerprint) { savedSimFingerprint = fingerprint; store.mode('simulator').runtime = value; store.save(); } } }, 1000);
   switchMode(current);

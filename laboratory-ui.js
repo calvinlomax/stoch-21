@@ -5,7 +5,7 @@ const BJLaboratoryUI = (() => {
     return new class {
       constructor() {
         this.loaded = false; this.loading = false; this.state = null; this.workers = []; this.shards = []; this.running = false;
-        this.stageIndex = 0; this.tick = 0; this.cursor = null; this.filter = ''; this.parameter = 'decks'; this.replayTimer = null; this.workerKind = 'Not started'; this.pendingUpdates = []; this.pendingStates = []; this.awaiting = 0; this.generation = 0;
+        this.stageIndex = 0; this.tick = 0; this.cursor = null; this.filter = ''; this.parameter = 'decks'; this.replayTimer = null; this.workerKind = 'Not started'; this.pendingUpdates = []; this.pendingStates = []; this.awaiting = 0; this.generation = 0; this.analysisId = 0;
       }
       get mode() { return api.store.mode('laboratory'); }
       get settings() { return this.mode.labSettings ||= L.defaults(); }
@@ -28,7 +28,7 @@ const BJLaboratoryUI = (() => {
           ['$countSystem', 'Count system', { hiLo: 'Hi-Lo', hiOptI: 'Hi-Opt I', none: 'No counting' }],
           ['starting', 'Starting bankroll $', 'number', 1, 100000000, 1], ['baseBet', 'Base wager $', 'number', 1, 1000000, 1], ['finite', 'Enforce bankroll limits', 'boolean'],
         ] : [
-          ['decks', 'Decks', 'number', 1, 8, 1], ['penetration', 'Penetration %', 'number', 20, 95, .1],
+          ['decks', 'Decks', 'number', 1, 8, 1], ['penetration', 'Penetration %', 'number', 20, 95, .0001],
           ['dealer.mode', 'Dealer soft 17', { S17: 'Stand (S17)', H17: 'Hit (H17)', custom: 'Custom thresholds' }],
           ['payout.preset', 'Blackjack payout', enums(['3:2', '3:2'], ['6:5', '6:5'], ['1:1', '1:1'], ['2:1', '2:1'], ['custom', 'Custom ratio'])],
           ['minBet', 'Table minimum $', 'number', 1, 1000000, 1], ['limits.tableMax', 'Table maximum $', 'number', .01, 100000000, .01],
@@ -81,17 +81,19 @@ const BJLaboratoryUI = (() => {
       }
       refresh() {
         if (!this.content || api.active !== 'laboratory') return;
-        this.content.replaceChildren(el('div', { class: 'mode-eyebrow' }, 'LABORATORY · PUT A STRATEGY UNDER PRESSURE'), heading('h1', 'Build an experiment', 'laboratory'), el('p', { class: 'mode-copy' }, 'Choose a strategy, vary the conditions, then run and explore the results.'));
+        this.content.replaceChildren(el('div', { class: 'mode-eyebrow' }, 'LABORATORY · PUT A STRATEGY UNDER PRESSURE'));
+        const head = el('div', { class: 'lab-heading-row' }), switcher = el('div', { class: 'segmented-control', role: 'group', 'aria-label': 'Laboratory strategy mode' });
+        for (const [multi, label] of [[false, 'Single strategy'], [true, 'Compare multiple']]) { const choice = button(label, () => { if (this.running) return; this.settings.multiEnabled = multi; if (multi) this.ensureStrategies(); if (this.stageIndex === 3) this.stageIndex = 0; api.persist(); this.refresh(); }); choice.disabled = this.running; choice.setAttribute('aria-pressed', !!this.settings.multiEnabled === multi); switcher.append(choice); }
+        head.append(heading('h1', 'Build an experiment', 'laboratory'), switcher); this.content.append(head, el('p', { class: 'mode-copy' }, 'Choose a strategy, vary the conditions, then run and explore the results.'));
         const steps = el('div', { class: 'workflow-steps', 'aria-label': 'Laboratory workflow' });
-        ['Strategy', 'Test Environment', 'Experiment', 'Results'].forEach((title, index) => { const b = button(`${index + 1}. ${title}`, () => { this.stageIndex = index; this.refresh(); }); b.setAttribute('aria-current', this.stageIndex === index ? 'step' : 'false'); b.dataset.labStep = index; steps.append(b, api.info(title, null, index === 0 ? 'strategy' : 'inference')); }); this.content.append(steps);
+        const labels = this.settings.multiEnabled ? ['Strategy', 'Test Environment', 'Experiment', 'Results'] : ['Setup', 'Test Environment', 'Experiment'];
+        labels.forEach((title, index) => { const b = button(`${index + 1}. ${title}`, () => { this.stageIndex = index; this.refresh(); }); b.setAttribute('aria-current', this.stageIndex === index ? 'step' : 'false'); b.dataset.labStep = index; steps.append(b, api.info(title, null, index === 0 ? 'strategy' : 'inference')); }); this.content.append(steps);
         const guidance = ['Choose the strategy and table settings to test.', 'Choose which conditions stay fixed and which vary between environments.', 'Choose the size of the experiment and preview its design before running.', 'Follow progress, inspect uncertainty and explore individual runs.'];
         this.content.append(el('p', { class: 'lab-step-intro' }, `Step ${this.stageIndex + 1} of 4 · ${guidance[this.stageIndex]}`));
         if (this.stageIndex === 0) this.strategy(); else if (this.stageIndex === 1) this.environment(); else if (this.stageIndex === 2) this.experiment(); else this.results();
       }
       strategy() {
         const config = api.configuration('laboratory'), section = panel('Player strategy', 'strategy');
-        const toggle = field('Compare multiple', 'checkbox', !!this.settings.multiEnabled, value => { this.settings.multiEnabled = value; if (value) this.ensureStrategies(); api.persist(); this.refresh(); }, { id: 'lab-multi', disabled: this.running });
-        section.querySelector('.panel-header').append(toggle);
         if (this.settings.multiEnabled) {
           section.body.append(el('p', { class: 'mode-copy' }, 'Choose common table conditions, then configure two to five independent strategies.'), button('Table Settings', () => this.editSettings()));
           const list = el('div', { class: 'lab-strategy-list' });
@@ -237,17 +239,19 @@ const BJLaboratoryUI = (() => {
         for (const update of this.pendingUpdates) {
           const job = this.state.jobs.find(j => j.id === update.id); if (!job) continue;
           job.path.push(...update.points); if (update.stats) job.stats = update.stats; job.done = update.done; job.reason = update.reason || job.reason; job.rebuys = update.rebuys || 0;
-          for (const p of update.points) {
-            for (const [type, key] of [['count', Math.max(-20, Math.min(20, Math.floor(p.openingTC)))], ['penetration', Math.min(9, Math.floor(p.penetration * 10))], ['bet', Math.floor(Math.log2(Math.max(.01, p.bet / 100)) * 2)]]) {
-              const bin = job.bins[type][key] ||= { profit: 0, wager: 0, n: 0 }; bin.profit += p.delta; bin.wager += p.roundWager; bin.n++;
-            }
-          }
+          for (const [type, values] of Object.entries(update.bins || {})) for (const [key, delta] of Object.entries(values)) { const bin = job.bins[type][key] ||= { profit: 0, wager: 0, n: 0 }; bin.profit += delta.profit; bin.wager += delta.wager; bin.n += delta.n; }
         }
         if (this.pendingStates.length) { this.state.checkpoints = this.pendingStates; this.state.tick = this.tick; this.persist(); }
         const allDone = this.state.jobs.every(j => j.done);
         if (allDone) { this.running = false; this.state.status = 'complete'; this.finalSummary = this.state.design.settings.multiEnabled ? this.strategySummaries(this.state.jobs, true) : L.summarize(this.state.jobs, this.state.design.settings.confidence, true); this.state.summary = this.finalSummary; this.checkpointPause(); api.notice('Laboratory experiment complete. Verdicts use uncertainty across independent environment clusters.'); }
-        if (api.active === 'laboratory' && this.stageIndex === 3 && !this.paintPending) { this.paintPending = true; requestAnimationFrame(() => { this.paintPending = false; this.renderLive(); }); }
+        this.schedulePaint();
         if (this.running) setTimeout(() => this.dispatch(), 0); else if (!allDone) this.checkpointPause();
+      }
+      schedulePaint() {
+        if (api.active !== 'laboratory' || this.stageIndex !== 3 || this.paintPending) return;
+        this.paintPending = true;
+        const frame = time => { if (api.active !== 'laboratory' || this.stageIndex !== 3) { this.paintPending = false; return; } if (time - (this.lastPaint || 0) < 125) { requestAnimationFrame(frame); return; } this.lastPaint = time; this.paintPending = false; this.renderLive(); };
+        requestAnimationFrame(frame);
       }
       pauseExperiment() { this.running = false; if (this.state) this.state.status = 'paused'; if (!this.awaiting) this.checkpointPause(); api.notice('Pausing after the synchronized tick; saving all worker states.'); this.refresh(); }
       checkpointPause() {
@@ -263,7 +267,7 @@ const BJLaboratoryUI = (() => {
       }
       fail(message) { this.running = false; if (this.state) this.state.status = 'error'; this.terminateWorkers(); this.persist(); api.notice('Experiment stopped: ' + message, true); if (api.active === 'laboratory') this.refresh(); }
       terminateWorkers() { for (const worker of this.workers) worker.terminate(); this.workers = []; this.shards = []; this.awaiting = 0; this.checkpointing = false; }
-      stop() { this.running = false; this.generation++; this.terminateWorkers(); clearInterval(this.replayTimer); }
+      stop() { this.running = false; this.generation++; this.terminateWorkers(); this.analysisWorker?.terminate(); this.analysisWorker = null; this.analysisBusy = false; this.analysisActive = this.analysisPending = null; clearInterval(this.replayTimer); }
       pause() { clearInterval(this.replayTimer); }
       selectedConfig() { return this.state?.jobs.find(j => j.id === this.filter)?.config || null; }
       selectedJobs(comparisonScope = false) {
@@ -276,6 +280,40 @@ const BJLaboratoryUI = (() => {
               openingWager: point.openingSum || 0, largestWager: point.largestWager || 0, squares: point.squares || 0, bankrupt: !!point.bankrupt, actions: point.actions || {} },
             bins: this.binsFor(path.slice(1)) };
         });
+      }
+      analysisViewKey() { return JSON.stringify([this.filter, this.cursor, this.drillStrategy, this.drillEnvironment, this.drillSession, [...(this.hiddenStrategies || [])].sort()]); }
+      queueDistributions(jobs, multi) {
+        if (!this.distributionHost?.parentElement.open) return true;
+        if (this.analysisUnavailable || typeof Worker === 'undefined') return false;
+        if (!this.analysisWorker) {
+          try {
+            this.analysisWorker = new Worker('./lab-analysis-worker.js');
+            this.analysisWorker.onmessage = event => {
+              const request = this.analysisActive; this.analysisBusy = false; this.analysisActive = null;
+              if (event.data.error) { this.analysisUnavailable = true; this.analysisWorker.terminate(); this.analysisWorker = null; api.notice('Distribution worker unavailable: ' + event.data.error, true); if (api.active === 'laboratory' && this.stageIndex === 3) this.renderLive(); return; }
+              if (request?.host === this.distributionHost && request.viewKey === this.analysisViewKey() && request.host.parentElement.open && api.active === 'laboratory' && this.stageIndex === 3) this.paintDistributions(event.data.cards, request.multi);
+              if (this.analysisPending) { const next = this.analysisPending; this.analysisPending = null; if (next.host === this.distributionHost && next.host.parentElement.open && api.active === 'laboratory' && this.stageIndex === 3) this.queueDistributions(this.selectedJobs(), next.multi); }
+            };
+            this.analysisWorker.onerror = event => { event.preventDefault(); this.analysisUnavailable = true; this.analysisWorker?.terminate(); this.analysisWorker = null; this.analysisBusy = false; this.analysisPending = null; if (api.active === 'laboratory' && this.stageIndex === 3) this.renderLive(); };
+          } catch { this.analysisUnavailable = true; return false; }
+        }
+        if (this.analysisBusy) { this.analysisPending = { host: this.distributionHost, multi }; return true; }
+        const snapshot = { host: this.distributionHost, viewKey: this.analysisViewKey(), multi, selected: !!this.filter, confidence: this.state.design.settings.confidence,
+          strategies: multi ? this.state.design.settings.strategies.map(({ id, name }) => ({ id, name })) : [],
+          jobs: jobs.map(j => ({ id: j.id, environment: j.environment, arm: j.arm, strategyId: j.strategyId, stats: j.stats, bins: j.bins, config: { seed: j.config.seed, rules: { dealer: j.config.rules.dealer, payout: j.config.rules.payout } } })) };
+        this.dispatchAnalysis(snapshot);
+        return true;
+      }
+      dispatchAnalysis(snapshot) {
+        this.analysisBusy = true; this.analysisActive = snapshot;
+        const { host, ...message } = snapshot; this.analysisWorker.postMessage({ ...message, id: ++this.analysisId });
+      }
+      paintDistributions(cards, multi) {
+        this.distributionHost.replaceChildren();
+        for (const data of cards) { const card = el('section', { class: 'lab-chart-panel' }), wrap = el('div', { class: 'lab-chart' }), canvas = el('canvas', { 'aria-label': data.title }), caption = el('div', { class: 'chart-caption' }); wrap.append(canvas); card.append(heading('h3', data.title, 'inference'), wrap, caption); this.distributionHost.append(card);
+          const values = data.values.map(v => ({ ...v, color: v.strategyId ? this.color(v.strategyId) : undefined }));
+          api.bars(canvas, values, { caption, select: data.selectable ? value => { const job = this.state.jobs.find(j => j.id === value.runId); if (!job) return; this.filter = job.id; if (multi) { this.drillStrategy = job.strategyId; this.drillEnvironment = job.environment; this.drillSession = job.session; } this.refresh(); } : null });
+        }
       }
       strategyName(id) { return this.state?.design?.settings?.strategies?.find(s => s.id === id)?.name || (id === 'control' ? 'Control' : id === 'strategy' ? 'Strategy' : id || 'Strategy'); }
       strategySummaries(jobs, bootstrap = false) {
@@ -355,8 +393,9 @@ const BJLaboratoryUI = (() => {
         }
       }
       renderMultiAnalysis() {
-        const jobs = this.selectedJobs(), strategies = this.state.design.settings.strategies; this.distributionHost.replaceChildren();
-        if (this.distributionHost.parentElement.open) {
+        const jobs = this.selectedJobs(), strategies = this.state.design.settings.strategies;
+        if (this.distributionHost.parentElement.open && !this.queueDistributions(jobs, true)) {
+        this.distributionHost.replaceChildren();
         for (const [title, accessor] of [['Session profit distribution $', j => j.stats.profit / 100], ['Drawdown distribution', j => j.stats.drawdown]]) {
           const valid = jobs.filter(j => j.stats), vals = valid.map(accessor), lo = Math.min(0, ...vals), hi = Math.max(lo + 1e-6, ...vals), bins = 10, values = [];
           for (let i = 0; i < bins; i++) for (const s of strategies) { const count = valid.filter(j => j.strategyId === s.id && Math.min(bins - 1, Math.floor((accessor(j) - lo) / (hi - lo) * bins)) === i).length; if (valid.some(j => j.strategyId === s.id)) values.push({ label: `${s.name}: ${(lo + i * (hi - lo) / bins).toFixed(2)}–${(lo + (i + 1) * (hi - lo) / bins).toFixed(2)}`, value: count, color: this.color(s.id) }); }
@@ -443,6 +482,7 @@ const BJLaboratoryUI = (() => {
         }
       }
       renderDistributions(jobs) {
+        if (this.queueDistributions(jobs, false)) return;
         if (this.filter) jobs = jobs.map(j => ({ ...j, arm: 'strategy' }));
         this.distributionHost.replaceChildren();
         const cards = [];
@@ -482,7 +522,15 @@ const BJLaboratoryUI = (() => {
       }
       renderDetails() {
         if (!this.detailHost) return; this.detailHost.body.replaceChildren(); const selected = this.selectedJobs(); const job = this.state.jobs.find(j => j.id === this.filter) || (selected.length === 1 ? selected[0] : null);
-        if (!job) { this.detailHost.body.append(el('p', {}, 'Click a trajectory, histogram bin, or run row to inspect an environment.')); return; }
+        if (!job) {
+          const multi = !!this.state.design.settings.multiEnabled, examples = L.exampleRuns(multi ? this.selectedJobs(true) : selected, multi ? (this.reference || this.state.design.settings.strategies[0].id) : null);
+          if (!examples.length) { this.detailHost.body.append(el('p', { class: 'mode-copy' }, multi ? 'Matched examples appear as strategies complete rounds in the same environment and session.' : 'Run examples appear as rounds are completed.')); return; }
+          this.detailHost.body.append(el('p', { class: 'mode-copy' }, multi ? 'Matched examples compare return on wager against the selected reference in the same environment and session.' : 'Examples use return on wager. Anomalous combines unusual return and volatility relative to the other runs.'));
+          const list = el('div', { class: 'lab-example-grid' });
+          for (const example of examples) { const run = this.state.jobs.find(j => j.id === example.jobId), ref = example.referenceId ? this.state.jobs.find(j => j.id === example.referenceId) : null, card = el('div', { class: 'lab-example' });
+            card.append(el('strong', {}, example.label), el('span', {}, `${multi ? this.strategyName(run.strategyId) + ' vs ' + this.strategyName(ref.strategyId) + ' · ' : ''}Env ${run.environment + 1} / session ${run.session + 1}`), el('span', {}, `${multi ? 'ROI difference' : 'ROI'}: ${pct(example.value)}`), button('Inspect', () => { this.filter = run.id; if (multi) { this.drillStrategy = run.strategyId; this.drillEnvironment = run.environment; this.drillSession = run.session; } this.refresh(); })); list.append(card); }
+          this.detailHost.body.append(list, el('small', { class: 'mode-copy' }, 'Anomaly is a descriptive rank, not a probability or significance test.')); return;
+        }
         this.detailHost.body.append(el('p', {}, `${this.strategyName(job.strategyId || job.arm)} · Environment ${job.environment + 1}, session ${job.session + 1}. Seed ${job.config.seed}; rebuys ${job.rebuys || 0}.`));
         if (job.strategyId) { const other = el('select', { 'aria-label': 'Inspect another strategy in this environment and session' }); for (const s of this.state.design.settings.strategies) other.append(el('option', { value: s.id }, s.name)); other.value = job.strategyId; other.onchange = () => { const next = this.state.jobs.find(j => j.strategyId === other.value && j.environment === job.environment && j.session === job.session); if (next) { this.hiddenStrategies.delete(next.strategyId); this.drillStrategy = next.strategyId; this.drillEnvironment = next.environment; this.drillSession = next.session; this.filter = next.id; this.refresh(); } }; this.detailHost.body.append(other); }
         const controls = el('div', { class: 'transfer-row' }); controls.append(button('Open this environment in Simulator', () => api.transferConfig('simulator', job.config)), button('Play this strategy', () => api.transferConfig('play', job.config)), button('Practice this strategy in Learn', () => api.transferConfig('learn', job.config)), button('Replay table at cursor', () => this.replayTable(job))); this.detailHost.body.append(controls);

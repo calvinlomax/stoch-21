@@ -38,6 +38,19 @@ test('randomized designs and synchronized worker shards are deterministic and re
   for (let i = 0; i < 3; i++) assert.deepEqual(s1.tick(), s2.tick());
   assert.equal(a.jobs[0].config.seed, a.jobs[1].config.seed);
 });
+test('worker tick bins retain the count, wager, and profit of every settled round', () => {
+  const settings = { ...L.defaults(), environments: 1, sessions: 1, hands: 20, tickHands: 5 };
+  const job = L.design(config(), settings).jobs[0], shard = new L.Shard([job], settings);
+  while (!shard.jobs[0].done) {
+    const update = shard.tick()[0];
+    for (const type of ['count', 'penetration', 'bet']) {
+      const bins = Object.values(update.bins[type]);
+      assert.equal(bins.reduce((sum, bin) => sum + bin.n, 0), update.points.length);
+      assert.equal(bins.reduce((sum, bin) => sum + bin.profit, 0), update.points.reduce((sum, point) => sum + point.delta, 0));
+      assert.equal(bins.reduce((sum, bin) => sum + bin.wager, 0), update.points.reduce((sum, point) => sum + point.roundWager, 0));
+    }
+  }
+});
 test('multi-strategy designs share environments and seeds while preserving independent strategy settings', () => {
   const first = config({ starting: 5000, baseBet: 25 }), second = config({ starting: 12000, baseBet: 50, countSystem: 'none' });
   second.rules = R.defaults(); second.rules.play.mode = 'stand'; second.rules.bet.mode = 'flat'; second.rules.limits.tableMax = 3000;
@@ -51,6 +64,16 @@ test('multi-strategy designs share environments and seeds while preserving indep
   const shard = new L.Shard(design.jobs, design.settings); shard.tick(); const saved = shard.dump(), restored = new L.Shard(design.jobs, design.settings); restored.restore(saved); assert.deepEqual(shard.tick(), restored.tick());
   assert.throws(() => L.design(config(), { ...settings, strategies: [settings.strategies[0]] }), /two and five/);
   assert.throws(() => L.design(config(), { ...settings, hands: 100000, environments: 128, sessions: 20 }), /2,000,000/);
+});
+test('Laboratory examples rank runs and only compare matched environments and sessions', () => {
+  const jobs = [];
+  for (const environment of [0, 1, 2]) for (const strategyId of ['a', 'b']) {
+    const profit = strategyId === 'a' ? 0 : [-20, 10, 70][environment];
+    jobs.push({ id: `${environment}:${strategyId}`, environment, session: 0, strategyId, arm: 'strategy', config: { seed: environment }, stats: { rounds: 10, wager: 1000, profit, squares: 1000 + profit * profit, openingWager: 1000 } });
+  }
+  const single = L.exampleRuns(jobs.filter(j => j.strategyId === 'b')); assert.deepEqual(single.map(x => x.label), ['Best', 'Worst', 'Median', 'Most anomalous']); assert.equal(single[0].jobId, '2:b'); assert.equal(single[1].jobId, '0:b');
+  const paired = L.exampleRuns(jobs, 'a'); assert.equal(paired[0].jobId, '2:b'); assert.equal(paired[0].referenceId, '2:a'); assert.equal(paired[1].referenceId, '0:a');
+  assert.deepEqual(L.exampleRuns(jobs.filter(j => j.strategyId !== 'a'), 'a'), []);
 });
 test('cluster intervals merge common seeds and use correct small-sample critical values', () => {
   assert.ok(Math.abs(L.tCritical(.95, 1) - 12.706204736) < 1e-5); assert.ok(Math.abs(L.tCritical(.95, 29) - 2.045229642) < 1e-5);

@@ -1955,6 +1955,9 @@ const RuleSettings = (() => {
     ),
   );
   function init() {
+    const sweepGroup = el('optgroup', { label: 'Sweep examples · exploratory' });
+    for (const preset of BJSweepPresets.presets) sweepGroup.append(el('option', { value: 'sweep:' + preset.id }, preset.name));
+    $('advancedPreset').append(sweepGroup);
     for (const [key, name] of Object.entries(sections)) {
       let b = el("button", { type: "button", "data-section": key }, name);
       b.onclick = () => {
@@ -2039,6 +2042,10 @@ const RuleSettings = (() => {
           e.target.value = "";
           return;
         }
+      } else if (type.startsWith('sweep:')) {
+        const preset = BJSweepPresets.presets.find(p => 'sweep:' + p.id === type);
+        draftSettings = validateEnvelope(BJSweepPresets.apply(draftSettings, preset.id));
+        $('advancedNotice').textContent = BJSweepPresets.description(preset);
       } else {
         draftSettings.rules = R.defaults();
         if (type === "counter") {

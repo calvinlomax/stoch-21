@@ -154,7 +154,9 @@ const BJLab = (() => {
         }
         const { path, ...summary } = job.stats;
         job.stats.path = job.stats.path.slice(-1);
-        return { id: job.id, points, stats: summary, done: job.done, reason: job.reason, rebuys: job.rebuys };
+        const bins = { count: {}, penetration: {}, bet: {} };
+        for (const p of points) for (const [type, key] of [['count', Math.max(-20, Math.min(20, Math.floor(p.openingTC)))], ['penetration', Math.min(9, Math.floor(p.penetration * 10))], ['bet', Math.floor(Math.log2(Math.max(.01, p.bet / 100)) * 2)]]) { const b = bins[type][key] ||= { profit: 0, wager: 0, n: 0 }; b.profit += p.delta; b.wager += p.roundWager; b.n++; }
+        return { id: job.id, points, stats: summary, bins, done: job.done, reason: job.reason, rebuys: job.rebuys };
       });
     }
   }
@@ -259,6 +261,25 @@ const BJLab = (() => {
     const se = Math.sqrt(influence.reduce((s, v) => s + v * v, 0) / (groups.length - 1) / groups.length), delta = tCritical(confidence, groups.length - 1) * se;
     return { point: pa - pb, ci: [pa - pb - delta, pa - pb + delta], clusters: groups.length };
   }
+  // Descriptive examples, not statistical significance tests. Normalizing by
+  // median absolute deviation makes unusually volatile paths visible too.
+  function exampleRuns(jobs, referenceId = null) {
+    const valid = jobs.filter(j => j.stats?.rounds && j.stats.wager > 0);
+    const roi = j => j.stats.profit / j.stats.wager;
+    const volatility = j => { const s = j.stats, n = s.rounds; return n > 1 ? Math.sqrt(Math.max(0, (s.squares - s.profit * s.profit / n) / (n - 1))) / Math.max(1, s.openingWager / n) : 0; };
+    let candidates;
+    if (referenceId) {
+      const refs = new Map(valid.filter(j => j.strategyId === referenceId).map(j => [`${j.environment}:${j.session}`, j]));
+      candidates = valid.filter(j => j.strategyId !== referenceId && refs.has(`${j.environment}:${j.session}`)).map(j => { const ref = refs.get(`${j.environment}:${j.session}`); return { job: j, reference: ref, score: roi(j) - roi(ref), volatility: Math.abs(volatility(j) - volatility(ref)) }; });
+    } else candidates = valid.filter(j => j.arm !== 'control').map(j => ({ job: j, score: roi(j), volatility: volatility(j) }));
+    if (!candidates.length) return [];
+    candidates.sort((a, b) => a.score - b.score || a.job.id.localeCompare(b.job.id));
+    const median = values => { const sorted = [...values].sort((a, b) => a - b), i = Math.floor(sorted.length / 2); return sorted.length % 2 ? sorted[i] : (sorted[i - 1] + sorted[i]) / 2; };
+    const center = median(candidates.map(c => c.score)), volCenter = median(candidates.map(c => c.volatility));
+    const mad = Math.max(1e-9, median(candidates.map(c => Math.abs(c.score - center)))), volMad = Math.max(1e-9, median(candidates.map(c => Math.abs(c.volatility - volCenter))));
+    const anomalous = [...candidates].sort((a, b) => (Math.abs(b.score - center) / mad + Math.abs(b.volatility - volCenter) / volMad) - (Math.abs(a.score - center) / mad + Math.abs(a.volatility - volCenter) / volMad))[0];
+    return [['Best', candidates.at(-1)], ['Worst', candidates[0]], ['Median', candidates[Math.floor((candidates.length - 1) / 2)]], ['Most anomalous', anomalous]].map(([label, c]) => ({ label, jobId: c.job.id, referenceId: c.reference?.id || null, value: c.score, volatility: c.volatility }));
+  }
   function solve(a, b) {
     const n = b.length, rows = a.map((r, i) => [...r, b[i]]);
     for (let i = 0; i < n; i++) { let pivot = i; for (let j = i + 1; j < n; j++) if (Math.abs(rows[j][i]) > Math.abs(rows[pivot][i])) pivot = j;
@@ -276,6 +297,6 @@ const BJLab = (() => {
     for (let i = 2; i < n; i++) a[i][i] += smoothing;
     const coefficients = solve(a, b); return points.map(p => ({ x: p.x, y: basis(p.x).reduce((s, v, i) => s + v * coefficients[i], 0) }));
   }
-  return { PARAMETERS, defaults, get, set, sample, design, Shard, summarize, comparison, clusterGroups, ratioInterval, tCDF, tCritical, fit };
+  return { PARAMETERS, defaults, get, set, sample, design, Shard, summarize, comparison, exampleRuns, clusterGroups, ratioInterval, tCDF, tCritical, fit };
 })();
 if (typeof module !== 'undefined') module.exports = BJLab;

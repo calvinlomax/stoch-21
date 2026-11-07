@@ -129,5 +129,6 @@ window.SimulatorBridge = {
     lastCompletedSnapshot = snapshot; renderTable(snapshot); stableProb = sim.probabilities(); updateProb(stableProb); stats(); uiStatus();
   },
   refresh() { if (sim) { renderTable(lastSnapshot || sim.snap(null)); stats(); } else { renderTable(null); initialProb(); } },
+  redrawCharts() { drawEquity(); drawHistogram(); },
   get state() { return state; },
 };

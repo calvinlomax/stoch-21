@@ -5,3 +5,5 @@ playwright-report/
 
 # Local-only ML code, environments, datasets, checkpoints, logs, and reports.
 /ML/*
+
+strategy_sweep_20261106_233424.csv

@@ -51,7 +51,7 @@ test('Laboratory executes real parallel arms, updates every trajectory and persi
   await mode(page, 'Laboratory'); await page.locator('[data-lab-step="2"]').click();
   for (const [id, value] of [['environments', 4], ['sessions', 1], ['hands', 30], ['workers', 2]]) await page.locator('#lab-' + id).fill(String(value));
   await page.locator('#lab-compare').check(); await page.getByRole('button', { name: 'Preview actual design', exact: true }).click(); await expect(page.getByRole('heading', { name: 'Resulting experiment design', exact: true })).toBeVisible(); await page.getByRole('button', { name: 'Run experiment', exact: true }).click();
-  await expect(page.locator('.lab-completion')).toContainText('8/8 runs complete', { timeout: 30000 }); expect(await page.locator('.lab-grid canvas').count()).toBeGreaterThanOrEqual(10);
+  await expect(page.locator('.lab-completion')).toContainText('8/8 runs complete', { timeout: 30000 }); await page.locator('summary').filter({ hasText: 'Outcome distributions' }).click(); await expect.poll(() => page.locator('.lab-grid canvas').count()).toBeGreaterThanOrEqual(10);
   await page.locator('.lab-grid').first().screenshot({ path: '/private/tmp/stoch21-laboratory-charts.png' });
   await page.locator('#lab-fit-gam').check(); await page.locator('#lab-fit-lr').check(); await page.locator('#lab-fit-sma').check(); await page.getByRole('button', { name: 'Replay all paths', exact: true }).click();
   await page.getByRole('button', { name: 'Follow live', exact: true }).click(); await page.locator('#lab-run-filter').selectOption('0:0:strategy'); await expect(page.getByRole('button', { name: 'Open this environment in Simulator', exact: true })).toBeVisible();
@@ -110,7 +110,7 @@ test('settings dialogs keep the workspace focused and return from advanced rules
 });
 test('Laboratory compares independently configured strategies live and supports replay and drill-down', async ({ page }) => {
   const errors = []; page.on('pageerror', e => errors.push(e.message));
-  await mode(page, 'Laboratory'); await page.locator('#lab-multi').check();
+  await mode(page, 'Laboratory'); await page.getByRole('button', { name: 'Compare multiple', exact: true }).click();
   await expect(page.locator('.lab-strategy-row')).toHaveCount(2);
   await page.getByRole('button', { name: 'Table Settings', exact: true }).click();
   await expect(page.locator('#advancedTitle')).toHaveText('Table settings'); await page.locator('#adv-decks').fill('2'); await page.locator('#advancedApply').click();
@@ -125,7 +125,7 @@ test('Laboratory compares independently configured strategies live and supports 
   await expect(page.locator('.lab-completion')).toContainText('9/9 runs complete', { timeout: 30000 });
   const data = await page.evaluate(() => new Promise(resolve => { const r = indexedDB.open('blackjack-laboratory-v1', 1); r.onsuccess = () => { const q = r.result.transaction('runs').objectStore('runs').get('latest'); q.onsuccess = () => resolve(q.result); }; }));
   expect(data.jobs).toHaveLength(9); expect(data.jobs.filter(j => j.strategyId === 's2')[0].config.rules.play.mode).toBe('stand'); expect(data.jobs.filter(j => j.strategyId === 's2')[0].config.baseBet).toBe(50); expect(data.jobs[0].config.seed).toBe(data.jobs[1].config.seed);
-  await expect(page.locator('.lab-comparison-row')).toHaveCount(3); await page.getByLabel('Show Strategy 2').uncheck(); await expect(page.locator('.lab-comparison-row')).toHaveCount(2); await page.getByLabel('Show Strategy 2').check();
+  await expect(page.locator('.lab-comparison-row')).toHaveCount(3); await expect(page.locator('.lab-example')).toHaveCount(4); await expect(page.locator('.lab-example').first()).toContainText('vs'); await page.getByLabel('Show Strategy 2').uncheck(); await expect(page.locator('.lab-comparison-row')).toHaveCount(2); await page.getByLabel('Show Strategy 2').check();
   await page.getByLabel('Show individual runs').check(); await page.getByLabel('Show uncertainty bands').check(); await page.getByRole('button', { name: 'Replay all paths' }).click(); await page.getByRole('button', { name: 'Follow live' }).click();
   await page.getByLabel('Strategy', { exact: true }).selectOption('s2'); await page.getByLabel('Environment', { exact: true }).selectOption('0'); await page.getByLabel('Session / run').selectOption('0');
   await expect(page.getByLabel('Inspect another strategy in this environment and session')).toBeVisible();
@@ -134,13 +134,42 @@ test('Laboratory compares independently configured strategies live and supports 
   const exported = JSON.parse(await require('node:fs/promises').readFile(await download.path(), 'utf8')); expect(exported.strategies).toHaveLength(3); expect(exported.comparisons).toHaveLength(3);
 });
 test('comparison dashboard updates every strategy before the experiment finishes', async ({ page }) => {
-  const errors = []; page.on('pageerror', e => errors.push(e.message));
-  await mode(page, 'Laboratory'); await page.locator('#lab-multi').check(); await page.locator('[data-lab-step="2"]').click();
+  const errors = [], workers = []; page.on('pageerror', e => errors.push(e.message)); page.on('worker', worker => workers.push(worker.url()));
+  await mode(page, 'Laboratory'); await page.getByRole('button', { name: 'Compare multiple', exact: true }).click(); await page.locator('[data-lab-step="2"]').click();
   for (const [id, value] of [['environments', 2], ['sessions', 1], ['hands', 10000], ['workers', 2], ['tickHands', 1]]) await page.locator('#lab-' + id).fill(String(value));
   await page.getByRole('button', { name: 'Preview actual design' }).click(); await page.getByRole('button', { name: 'Run experiment', exact: true }).click();
   await expect(page.locator('.lab-comparison-row')).toHaveCount(2); await expect(page.locator('.lab-completion')).toContainText('running');
   await expect.poll(async () => page.locator('.lab-metric-values').first().innerText()).not.toContain('—');
+  await page.locator('summary').filter({ hasText: 'Outcome distributions' }).click(); await expect(page.getByRole('heading', { name: 'Session profit histogram $' })).toBeVisible(); expect(workers.some(url => url.endsWith('/lab-analysis-worker.js'))).toBe(true);
   await page.getByRole('button', { name: 'Pause experiment', exact: true }).click(); await expect(page.locator('.lab-completion')).toContainText('paused');
   await expect.poll(() => page.evaluate(() => new Promise(resolve => { const r = indexedDB.open('blackjack-laboratory-v1', 1); r.onsuccess = () => { const q = r.result.transaction('runs').objectStore('runs').get('latest'); q.onsuccess = () => resolve(q.result?.checkpoints?.length || 0); }; }))).toBe(4);
   await page.getByRole('button', { name: 'Resume experiment', exact: true }).click(); await expect(page.locator('.lab-completion')).toContainText('running'); expect(errors).toEqual([]);
+});
+test('sweep presets expose their source, remain distinct, and apply to the active mode', async ({ page }) => {
+  const items = await page.evaluate(() => BJSweepPresets.presets.map(p => ({ ...p })));
+  expect(items).toHaveLength(10);
+  for (let i = 0; i < items.length; i++) for (let j = 0; j < i; j++) expect(['play', 'bet', 'decks', 'penetration', 'dealer'].filter(k => items[i][k] !== items[j][k]).length).toBeGreaterThanOrEqual(3);
+  await mode(page, 'Play'); await page.getByRole('button', { name: 'Presets & transfer' }).click(); await page.locator('#modePreset').selectOption('sweep:eight-linear');
+  await expect(page.locator('.preset-details')).toContainText('confidence intervals overlap zero'); await expect(page.locator('.preset-details')).toContainText('three settings');
+  await page.locator('#modeToolbar').getByRole('button', { name: 'Load', exact: true }).click();
+  const stored = await page.evaluate(() => BJWorkspace.store.mode('play').envelope); expect(stored.rules.play.mode).toBe('deviations'); expect(stored.rules.bet.mode).toBe('linear'); expect(stored.fields.seed).toBe('4138020132'); expect(+stored.fields.penetration).toBe(60.7221);
+  await page.locator('#modeToolbar').getByRole('button', { name: 'Close' }).click(); await mode(page, 'Simulator'); await page.locator('#advancedOpen').click(); await page.locator('#advancedPreset').selectOption('sweep:two-power'); await expect(page.locator('#advancedNotice')).toContainText('Source: environment 9'); await page.locator('#advancedApply').click(); await expect(page.locator('#decks')).toHaveValue('2');
+});
+test('Play wager information control changes the table footer and guidance', async ({ page }) => {
+  await mode(page, 'Play'); await page.getByRole('button', { name: 'New session', exact: true }).click(); await page.locator('.mode-settings').getByRole('button', { name: 'Start session' }).click();
+  await expect(page.locator('.game-table-footer')).toBeVisible(); await expect(page.locator('.wager-context')).toContainText('Available bankroll');
+  await page.getByRole('group', { name: 'Table information' }).getByRole('button', { name: 'Hide' }).click(); await expect(page.locator('.game-table-footer')).toBeHidden();
+  await page.getByRole('group', { name: 'Table information' }).getByRole('button', { name: 'Guidance' }).click(); await expect(page.locator('.game-table-footer')).toBeVisible(); await expect(page.locator('.wager-guidance')).toContainText('betting strategy suggests');
+  await page.locator('.game-action-bar').screenshot({ path: '/private/tmp/stoch21-wager-controls.png' });
+  await page.getByRole('group', { name: 'Table information' }).getByRole('button', { name: 'Details' }).click(); await expect(page.locator('.wager-guidance')).toHaveCount(0);
+});
+test('desktop workspaces fit common window sizes and initialize simulator charts after mode changes', async ({ page }) => {
+  for (const width of [800, 1024, 1280, 1600, 1920]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const name of ['Play', 'Learn', 'Laboratory', 'Simulator']) { await mode(page, name); await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true); }
+    await expect.poll(() => page.locator('#equityChart').evaluate(el => el.width)).toBeGreaterThan(0);
+  }
+  await mode(page, 'Laboratory'); await expect(page.getByRole('button', { name: '1. Setup' })).toBeVisible(); await expect(page.locator('[data-lab-step="3"]')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Compare multiple', exact: true }).click(); await expect(page.getByRole('button', { name: '1. Strategy' })).toBeVisible(); await expect(page.getByRole('button', { name: '4. Results' })).toBeVisible();
+  await page.setViewportSize({ width: 1024, height: 900 }); await page.screenshot({ path: '/private/tmp/stoch21-lab-desktop.png' });
 });
