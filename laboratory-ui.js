@@ -29,23 +29,26 @@ const BJLaboratoryUI = (() => {
         catch { try { localStorage.setItem('blackjack.lab.backup', JSON.stringify(this.state)); } catch { api.notice('Laboratory results remain in memory; browser storage is unavailable or full. Export results to retain them.', true); } }
       }
       mount(root) {
-        const shell = el('div', { class: 'workspace-shell' }), side = el('aside', { class: 'mode-setup' }); this.content = el('main', { class: 'mode-content' }); shell.append(side, this.content); root.replaceChildren(shell);
-        const fields = api.setup('laboratory', side);
-        fields.append(heading('h3', 'Experiment shortcuts', 'inference'), button('Preview experiment design', () => { this.preview(); this.stageIndex = 2; this.refresh(); }, true), button('View results', () => { this.stageIndex = 3; this.refresh(); }));
-        fields.append(el('p', { class: 'mode-copy' }, 'Frozen strategy → randomized environments → synchronized parallel runs → uncertainty and replay.'));
+        const reopen = !!this.settingsDialog?.open;
+        const shell = el('div', { class: 'workspace-shell workspace-full' }); this.content = el('main', { class: 'mode-content' }); shell.append(this.content); root.replaceChildren(shell);
+        const modal = api.settingsDialog('laboratory', shell, 'Strategy and table settings'); this.settingsDialog = modal.dialog;
+        api.setup('laboratory', modal.body);
         if (!this.loaded) { this.content.append(el('p', { class: 'mode-loader' }, 'Restoring Laboratory results…')); this.load(); return; }
-        this.refresh();
+        this.refresh(); if (reopen) modal.dialog.showModal();
       }
       refresh() {
         if (!this.content || api.active !== 'laboratory') return;
-        this.content.replaceChildren(el('div', { class: 'mode-eyebrow' }, 'LABORATORY · PUT A STRATEGY UNDER PRESSURE'), heading('h1', 'Test the conditions, not just the outcome', 'laboratory'), el('p', { class: 'mode-copy' }, 'Explore rule dependence, bankroll exposure and uncertainty across reproducible environments. Every run remains visible.'));
+        this.content.replaceChildren(el('div', { class: 'mode-eyebrow' }, 'LABORATORY · PUT A STRATEGY UNDER PRESSURE'), heading('h1', 'Build an experiment', 'laboratory'), el('p', { class: 'mode-copy' }, 'Choose a strategy, vary the conditions, then run and explore the results.'));
         const steps = el('div', { class: 'workflow-steps', 'aria-label': 'Laboratory workflow' });
-        ['Strategy', 'Test Environment', 'Experiment', 'Results'].forEach((title, index) => { const b = button(title, () => { this.stageIndex = index; this.refresh(); }); b.setAttribute('aria-current', this.stageIndex === index ? 'step' : 'false'); b.dataset.labStep = index; steps.append(b, api.info(title, null, index === 0 ? 'strategy' : 'inference')); }); this.content.append(steps);
+        ['Strategy', 'Test Environment', 'Experiment', 'Results'].forEach((title, index) => { const b = button(`${index + 1}. ${title}`, () => { this.stageIndex = index; this.refresh(); }); b.setAttribute('aria-current', this.stageIndex === index ? 'step' : 'false'); b.dataset.labStep = index; steps.append(b, api.info(title, null, index === 0 ? 'strategy' : 'inference')); }); this.content.append(steps);
+        const guidance = ['Choose the strategy and table settings to test.', 'Choose which conditions stay fixed and which vary between environments.', 'Choose the size of the experiment and preview its design before running.', 'Follow progress, inspect uncertainty and explore individual runs.'];
+        this.content.append(el('p', { class: 'lab-step-intro' }, `Step ${this.stageIndex + 1} of 4 · ${guidance[this.stageIndex]}`));
         if (this.stageIndex === 0) this.strategy(); else if (this.stageIndex === 1) this.environment(); else if (this.stageIndex === 2) this.experiment(); else this.results();
       }
       strategy() {
         const config = api.configuration('laboratory'), section = panel('Player strategy', 'strategy');
-        section.body.append(el('p', {}, `Playing: ${BJRules.PLAYS[config.rules.play.mode]}. Betting: ${BJRules.BETS[config.rules.bet.mode]}. Change the shared controls at left or open All rules & strategy to edit full matrices, deviations, functions and constraints.`));
+        section.body.append(el('p', {}, `Playing: ${BJRules.PLAYS[config.rules.play.mode]}. Betting: ${BJRules.BETS[config.rules.bet.mode]}. Open settings to change the strategy, table and betting rules.`));
+        section.body.append(button('Strategy & table settings', () => this.settingsDialog.showModal()));
         const details = el('details'); details.append(api.summary('Custom decision rules'));
         details.append(el('p', { class: 'mode-copy' }, 'First matching rule wins in Custom or Deviations mode. Each rule declares hand type, total range, dealer upcards (ace = 11), true-count range and action. All actions remain subject to legal-action fallback.'));
         const input = el('textarea', { id: 'lab-decision-rules', class: 'custom-rule-editor', 'aria-label': 'Custom decision rules JSON' }); input.value = JSON.stringify(config.rules.play.decisionRules || [], null, 2);
@@ -55,7 +58,8 @@ const BJLaboratoryUI = (() => {
       environment() {
         const section = panel('Fixed or randomized environment parameters', 'inference');
         section.body.append(el('p', { class: 'mode-copy' }, 'Each row can stay fixed, sample weighted allowed values, or use a supported numeric distribution. Fixed rows inherit the strategy setup unless explicitly set here. Invalid combinations are rejected and resampled, up to 100 attempts. Preview shows the actual accepted design.'));
-        const common = this.parameterTable(L.PARAMETERS.slice(0, 13)), more = el('details'); more.append(api.summary('All supported rule, limit, count and opponent variations'), this.parameterTable(L.PARAMETERS.slice(13)));
+        const common = el('details', { open: true, class: 'lab-disclosure' }); common.append(api.summary('Common conditions'), this.parameterTable(L.PARAMETERS.slice(0, 13)));
+        const more = el('details', { class: 'lab-disclosure' }); more.append(api.summary('More rule, limit, count and opponent conditions'), this.parameterTable(L.PARAMETERS.slice(13)));
         section.body.append(common, more, button('Preview design →', () => { this.preview(); this.stageIndex = 2; this.refresh(); }, true)); this.content.append(section);
       }
       parameterTable(descriptors) {
@@ -98,7 +102,7 @@ const BJLaboratoryUI = (() => {
         }
         const controls = el('div', { class: 'mode-controls' }); controls.append(button('Preview actual design', () => { this.preview(); this.refresh(); }), button('Run experiment', () => this.start(), true)); controls.querySelectorAll('button').forEach(b => b.disabled = this.running);
         if (this.state) controls.append(button(this.running ? 'Pause experiment' : 'Resume experiment', () => this.running ? this.pauseExperiment() : this.resume()), button('Results & live metrics', () => { this.stageIndex = 3; this.refresh(); }));
-        section.body.append(grid, controls);
+        section.body.append(el('p', { class: 'mode-copy' }, 'Set how many environments and hands to test. Preview shows the actual sampled conditions before you run.'), grid, controls);
         if (this.previewDesign) {
           const table = el('table', { class: 'lab-results-table' }), row = el('tr'); ['Environment', 'Decks', 'Cut', 'Dealer', 'Payout', 'Bankroll', 'Table $', 'Opponents', 'Seat', 'Shoe seed'].forEach(t => row.append(el('th', {}, t))); table.append(row);
           for (const env of this.previewDesign.environments) { const c = env.config, tr = el('tr'); [env.index + 1, c.decks, c.penetration + '% ' + c.penetrationMode, c.rules.dealer.mode + '/' + c.rules.dealer.hole, c.payout + ':1', c.starting, c.minBet + '–' + c.rules.limits.tableMax, c.opponents + ' ' + c.rules.opponents.skill, c.heroSeat + 1, c.seed].forEach(t => tr.append(el('td', {}, t))); table.append(tr); }
@@ -234,7 +238,8 @@ const BJLaboratoryUI = (() => {
         for (const [key, label, unit] of [['profit', 'Net player result · every run', '$'], ['bankroll', 'Bankroll / total equity · every run', '$'], ['drawdown', 'Maximum drawdown · every run', '%'], ['roi', 'Return on wager · every run', '%'], ['bet', 'Opening wager · every run', '$'], ['tc', 'True count · every run', '']]) {
           const card = el('section', { class: 'lab-chart-panel' }); card.append(heading('h3', label, 'fits')); const wrap = el('div', { class: 'lab-chart' }), canvas = el('canvas', { 'aria-label': label }), caption = el('div', { class: 'chart-caption' }); wrap.append(canvas); card.append(wrap, caption); grid.append(card); this.lineCharts.push({ key, label, unit, canvas, caption });
         }
-        this.content.append(grid); this.distributionHost = el('div', { class: 'lab-grid' }); this.content.append(this.distributionHost);
+        this.content.append(heading('h2', 'Run trajectories', 'fits'), el('p', { class: 'mode-copy' }, 'Each line follows a run. Use the filter and replay controls above to inspect a particular run or point in time.'), grid);
+        const distributions = el('details', { class: 'lab-disclosure' }); distributions.append(api.summary('Outcome distributions')); this.distributionHost = el('div', { class: 'lab-grid' }); distributions.append(this.distributionHost); distributions.ontoggle = () => { if (distributions.open) this.renderDistributions(this.selectedJobs()); }; this.content.append(distributions);
         this.tableHost = panel('Best / worst environments and run details', 'inference'); this.content.append(this.tableHost);
         this.sensitivityHost = panel('Parameter sensitivity', 'inference');
         const select = el('select', { 'aria-label': 'Sensitivity parameter' }); L.PARAMETERS.forEach(d => select.append(el('option', { value: d.key }, d.label))); select.value = this.parameter; select.onchange = () => { this.parameter = select.value; this.renderSensitivity(); }; this.sensitivityHost.body.append(select); this.sensitivityPlot = el('div', { class: 'lab-chart' }); this.sensitivityCanvas = el('canvas', { 'aria-label': 'Return by selected parameter' }); this.sensitivityPlot.append(this.sensitivityCanvas); this.sensitivityCaption = el('div', { class: 'chart-caption' }); this.sensitivityHost.body.append(this.sensitivityPlot, this.sensitivityCaption); this.content.append(this.sensitivityHost);

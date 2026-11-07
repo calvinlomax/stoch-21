@@ -21,8 +21,12 @@ const BJLearningUI = (() => {
         if (!this.drill && this.state.drillSession) try {
           this.drill = M.DrillSession.restore(this.state.drillSession); this.elapsed = this.state.drillSession.elapsed || 0; this.drillLogged = !!this.state.drillSession.logged;
         } catch (e) { api.notice('Drill could not be restored: ' + e.message, true); }
-        const shell = el('div', { class: 'workspace-shell' }), side = el('aside', { class: 'mode-setup' }); this.content = el('main', { class: 'mode-content' }); shell.append(side, this.content); root.replaceChildren(shell);
-        const fields = api.setup('learn', side), o = this.opts;
+        const reopen = !!this.settingsDialog?.open;
+        const shell = el('div', { class: 'workspace-shell workspace-full' }); this.content = el('main', { class: 'mode-content' }); shell.append(this.content); root.replaceChildren(shell);
+        const modal = api.settingsDialog('learn', shell, 'Learning settings'); this.settingsDialog = modal.dialog;
+        const tableSettings = el('details', { class: 'settings-more' }); tableSettings.append(el('summary', {}, 'Table & strategy settings')); const tableBody = el('div'); tableSettings.append(tableBody); api.setup('learn', tableBody);
+        const fields = el('div', { class: 'setup-fields' }), o = this.opts;
+        modal.body.append(heading('h2', 'Learning settings', 'learn'), el('p', { class: 'mode-copy' }, 'Choose the help and feedback you want while practicing.'), fields, tableSettings);
         fields.append(heading('h3', 'Assistance & feedback', 'feedback'));
         fields.append(field('Assistance level', 'select', o.assistance, value => { o.assistance = value; Object.assign(o, profiles[value]); this.save(); this.mount(root); }, { id: 'learn-assistance', options: { beginner: 'Beginner', assisted: 'Assisted', intermediate: 'Intermediate', advanced: 'Advanced', expert: 'Expert / No Assistance' }, category: 'feedback' }));
         fields.append(field('Hint level', 'select', o.hintLevel || 'full', value => { o.hintLevel = value; this.save(); this.refresh(); }, { id: 'learn-hintLevel', options: { full: 'Show recommendations', onDemand: 'On demand', none: 'No hints' }, category: 'feedback' }));
@@ -36,7 +40,7 @@ const BJLearningUI = (() => {
         for (const [key, label] of [['hints', 'Basic-strategy recommendation'], ['explanations', 'Explain preferred actions'], ['showRC', 'Show running count'], ['askRC', 'Ask RC before revealing'], ['showTC', 'Show true count'], ['askTC', 'Ask TC before revealing'], ['askDecks', 'Ask decks remaining'], ['cardValues', 'Show each card’s count value'], ['betHints', 'Betting recommendation'], ['deviationHints', 'Selected-strategy / deviation hints'], ['ev', 'Estimated EV comparison'], ['postHand', 'Post-hand explanation']])
           details.append(field(label, 'checkbox', o[key], value => { o[key] = value; this.save(); this.refresh(); }, { id: 'learn-' + key, category: /count|RC|TC|decks|card/i.test(label) ? 'counting' : 'feedback' }));
         fields.append(details, button('Learning mathematics', () => api.help('Running count, Hi-Lo and true count', null, 'counting')));
-        this.refresh();
+        this.refresh(); if (reopen) modal.dialog.showModal();
       }
       save() {
         if (this.game) this.state.guided = { ...this.game.dump(), answers: this.answers, pending: this.pending, feedback: this.feedback, countChecks: this.countChecks, logged: this.guideLogged, elapsed: this.guideSeconds(), stamp: this.guideStamp };
@@ -50,6 +54,7 @@ const BJLearningUI = (() => {
         if (!this.content || api.active !== 'learn') return;
         clearTimeout(this.timer); this.content.replaceChildren();
         this.content.append(el('div', { class: 'mode-eyebrow' }, 'LEARN · UNDERSTAND THE DECISION'), heading('h1', 'Build your blackjack intuition', 'learn'), el('p', { class: 'mode-copy' }, 'Practice real hands or isolate a concept. Feedback, hints and progress belong to this workspace.'));
+        this.content.append(button('Learning settings', () => this.settingsDialog.showModal()));
         const tabs = el('div', { class: 'mode-subtabs', 'aria-label': 'Learning submodes' });
         for (const [key, label] of [['guided', 'Guided Learning'], ['drills', 'Training / Drills'], ['progress', 'Progress']]) {
           const b = button(label, () => { this.pause(); this.opts.submode = key; this.save(); this.refresh(); }); b.setAttribute('aria-pressed', this.opts.submode === key); b.dataset.learnTab = key; tabs.append(b, api.info(label, null, key === 'drills' ? 'drills' : 'feedback'));

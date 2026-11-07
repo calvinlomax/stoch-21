@@ -174,6 +174,14 @@
     fields.append(button('All rules & strategy', () => RuleSettings.open()));
     return fields;
   }
+  function settingsDialog(mode, root, title) {
+    const dialog = el('dialog', { class: 'workspace-dialog mode-settings', 'aria-label': title });
+    const body = el('div', { class: 'dialog-body mode-setup' });
+    const footer = el('div', { class: 'dialog-actions' });
+    footer.append(button('Done', () => dialog.close()));
+    dialog.append(body, footer); root.append(dialog);
+    return { dialog, body, footer };
+  }
   function transferConfig(target, cfg = null) {
     if (!M.MODES.includes(target)) throw Error('Unknown target mode');
     let e = clone(store.mode().envelope);
@@ -198,24 +206,37 @@
     constructor() { this.game = null; this.counts = []; this.timer = null; this.busy = false; }
     mount(root) {
       if (!this.game && store.mode('play').game) { try { this.game = M.InteractiveSession.restore(store.mode('play').game); this.counts = store.mode('play').game.counts || []; } catch (error) { notice('Could not restore Play: ' + error.message, true); } }
-      const shell = el('div', { class: 'workspace-shell' }), side = el('aside', { class: 'mode-setup' }); this.content = el('main', { class: 'mode-content' }); shell.append(side, this.content); root.replaceChildren(shell);
-      const fields = setup('play', side), opts = store.mode('play').options;
+      const reopen = !!this.settingsDialog?.open, reopenMore = !!this.moreSettingsDialog?.open;
+      const shell = el('div', { class: 'workspace-shell workspace-full' }); this.content = el('main', { class: 'mode-content' }); shell.append(this.content); root.replaceChildren(shell);
+      const modal = settingsDialog('play', shell, 'New session settings'); this.settingsDialog = modal.dialog;
+      const fields = setup('play', modal.body), opts = store.mode('play').options;
       fields.append(heading('h3', 'Your controls', 'play'));
       for (const [key, label, options] of [['betting', 'Betting control', { manual: 'Manual wager', automatic: 'Selected sizing strategy' }], ['playing', 'Playing control', { manual: 'Manual decisions', automatic: 'Selected playing strategy' }]])
         fields.append(field(label, 'select', opts[key], value => { opts[key] = value; persist(); this.refresh(); }, { id: 'play-' + key, options, category: key === 'betting' ? 'betting' : 'strategy' }));
       for (const [key, label] of [['hints', 'Basic-strategy hints'], ['recommendations', 'Selected-strategy recommendation'], ['analysis', 'Session decision analysis'], ['manualCounts', 'Enter counts manually']])
         fields.append(field(label, 'checkbox', opts[key], value => { opts[key] = value; persist(); this.refresh(); }, { id: 'play-' + key, category: key === 'manualCounts' ? 'counting' : 'strategy' }));
-      this.refresh();
+      const quick = el('div', { class: 'quick-settings' });
+      for (const id of ['play-decks', 'play-dealer-mode', 'play-starting', 'play-baseBet', 'play-opponents', 'play-betting', 'play-playing']) {
+        const input = fields.querySelector('#' + id); if (input) quick.append(input.closest('.field'));
+      }
+      const advancedButton = [...fields.querySelectorAll('button')].find(b => b.textContent === 'All rules & strategy');
+      const extra = el('dialog', { class: 'workspace-dialog mode-settings-more', 'aria-label': 'Advanced session settings' }); this.moreSettingsDialog = extra;
+      extra.append(el('h2', {}, 'Advanced session settings'), el('p', { class: 'mode-copy' }, 'Fine-tune the table, strategies and your controls.'), fields);
+      if (advancedButton) extra.append(advancedButton);
+      const extraActions = el('div', { class: 'dialog-actions' }); extraActions.append(button('Done', () => extra.close())); extra.append(extraActions); shell.append(extra);
+      modal.body.append(quick, el('p', { class: 'settings-saved-note' }, 'Settings are saved as you change them.'), button('Advanced settings', () => extra.showModal()));
+      modal.footer.replaceChildren(button('Close', () => modal.dialog.close()), button('Start session', () => {
+        if (this.game && !this.game.ended && this.game.stats.rounds && !confirm('End this session and start a new one?')) return;
+        modal.dialog.close(); this.pause(); const c = configuration('play', true); this.game = new M.InteractiveSession(c, opts.analysis || opts.hints); this.counts = []; this.game.startRound(); this.save(); this.refresh();
+      }, true));
+      this.refresh(); if (reopen) modal.dialog.showModal(); if (reopenMore) extra.showModal();
     }
     save() { if (this.game) store.mode('play').game = { ...this.game.dump(), counts: this.counts }; persist(); }
     refresh() {
       if (!this.content || current !== 'play') return;
       clearTimeout(this.timer); const opts = store.mode('play').options; this.content.replaceChildren();
       const header = el('div', { class: 'mode-head' }), copy = el('div'); copy.append(el('div', { class: 'mode-eyebrow' }, 'PLAY · YOUR DECISIONS'), heading('h1', 'Take your seat', 'play'), el('p', { class: 'mode-copy' }, 'A real table, your wager, your call. Optional hints stay optional.'));
-      const controls = el('div', { class: 'mode-controls' }); controls.append(button(this.game ? 'New session' : 'Start session', () => {
-        if (this.game && !this.game.ended && this.game.stats.rounds && !confirm('End this session and start a new one?')) return;
-        this.pause(); const c = configuration('play', true); this.game = new M.InteractiveSession(c, opts.analysis || opts.hints); this.counts = []; this.game.startRound(); this.save(); this.refresh();
-      }, true));
+      const controls = el('div', { class: 'mode-controls' }); controls.append(button('New session', () => this.settingsDialog.showModal(), true));
       if (this.game) controls.append(button('Finish session', () => { this.game.finish(); this.save(); this.refresh(); }), button('Export session', () => download('blackjack-play-session.json', { ...this.game.dump(), statistics: this.game.stats, decisions: this.game.decisions, manualCounts: this.counts })));
       header.append(copy, controls); this.content.append(header);
       if (!this.game) { this.content.append(table(null, configuration('play'), null)); return; }
@@ -276,28 +297,31 @@
     pause() { clearTimeout(this.timer); this.busy = false; }
   }
   function download(name, data) { const blob = new Blob([typeof data === 'string' ? data : JSON.stringify(data, null, 2)], { type: name.endsWith('.csv') ? 'text/csv' : 'application/json' }); const url = URL.createObjectURL(blob), a = el('a', { href: url, download: name }); a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
-  const api = { el, button, field, panel, heading, info, help, math, metric, money, pct, notice, guarded, renderCards, table, chart, bars, store, setup, persist, configuration, updateEnvelope, transferConfig, download,
+  const api = { el, button, field, panel, heading, info, help, math, metric, money, pct, notice, guarded, renderCards, table, chart, bars, store, setup, settingsDialog, persist, configuration, updateEnvelope, transferConfig, download,
     summary(text, category = 'statistics') { const s = el('summary', {}, text); s.append(info(text, null, category)); return s; },
     get active() { return current; }, refresh: () => controllers[current]?.refresh?.() };
   window.BJWorkspace = api;
   controllers.play = new PlayUI(); controllers.learn = BJLearningUI.create(api); controllers.laboratory = BJLaboratoryUI.create(api);
   function toolbar() {
     const root = $('modeToolbar'), m = store.mode(); root.replaceChildren();
+    root.append(el('h2', {}, 'Presets & configuration'), el('p', { class: 'mode-copy' }, 'Save settings for this mode or copy them to another workspace.'));
+    const presetGroup = el('section', { class: 'dialog-section' }); root.append(presetGroup);
     const select = el('select', { id: 'modePreset', 'aria-label': 'Preset for this mode' }); select.append(el('option', { value: '' }, titles[current] + ' presets'));
     for (const name of Object.keys(m.presets)) select.append(el('option', { value: name }, name));
     const name = el('input', { id: 'modePresetName', placeholder: 'Preset name', maxlength: 80, 'aria-label': 'Mode preset name' });
-    root.append(el('label', {}, 'Mode presets'), info('Mode presets', infoText.storage, 'storage'), select, name,
+    presetGroup.append(el('h3', {}, 'Mode presets'), info('Mode presets', infoText.storage, 'storage'), select, name,
       button('Save', () => { m.envelope = RuleSettings.capture(); store.preset(name.value); toolbar(); notice('Preset saved for ' + titles[current] + '.'); }),
       button('Load', () => { store.loadPreset(select.value); syncEnvelope(); controllers[current]?.mount?.($('modeWorkspace')); toolbar(); }),
       button('Delete', () => { if (!select.value) throw Error('Choose a preset first.'); delete m.presets[select.value]; persist(); toolbar(); }));
-    root.append(el('span', { class: 'toolbar-spacer' }));
+    const transferGroup = el('section', { class: 'dialog-section' }); transferGroup.append(el('h3', {}, 'Copy settings to another mode')); root.append(transferGroup);
     const target = el('select', { id: 'modeTransferTarget', 'aria-label': 'Configuration destination' });
     for (const mode of M.MODES) if (mode !== current) target.append(el('option', { value: mode }, titles[mode]));
-    root.append(info('Move configurations', 'Copy the current rules, strategy, counting, bankroll and seats to another mode. In Laboratory, a selected environment can supply its realized configuration. This does not copy active game state.', 'storage'), target, button('Open configuration →', () => transferConfig(target.value, current === 'laboratory' ? controllers.laboratory.selectedConfig?.() : null)),
+    transferGroup.append(info('Move configurations', 'Copy the current rules, strategy, counting, bankroll and seats to another mode. In Laboratory, a selected environment can supply its realized configuration. This does not copy active game state.', 'storage'), target, button('Open configuration →', () => { root.close(); transferConfig(target.value, current === 'laboratory' ? controllers.laboratory.selectedConfig?.() : null); }),
       button('Reset all modes', async () => { if (!confirm('Reset all mode settings, saved presets, sessions, and learning progress?')) return;
         resetting = true; controllers.play.pause(); controllers.learn.pause?.(); controllers.laboratory.stop?.(); await controllers.laboratory.clearSaved();
         for (const key of Object.keys(localStorage)) if (key.startsWith('blackjack.')) localStorage.removeItem(key);
         location.reload(); }));
+    root.append(el('div', { class: 'dialog-actions' })); root.lastChild.append(button('Close', () => root.close()));
   }
   function switchMode(mode) {
     if (!M.MODES.includes(mode)) return;
@@ -327,6 +351,7 @@
     const wrap = el('div', { class: 'mode-choice', role: 'presentation' }), tab = el('button', { type: 'button', class: 'mode-tab', role: 'tab', 'aria-selected': mode === current, 'aria-controls': mode === 'simulator' ? 'simulatorWorkspace' : 'modeWorkspace', 'data-mode': mode }, titles[mode]);
     tab.onclick = () => guarded(() => switchMode(mode)); wrap.append(tab, info(titles[mode], infoText[mode], mode === 'laboratory' ? 'inference' : mode === 'learn' ? 'counting' : 'statistics')); nav.append(wrap);
   }
+  const utility = button('Presets & transfer', () => $('modeToolbar').showModal()); utility.classList.add('mode-utility'); nav.append(utility);
   nav.onkeydown = e => { if (!['ArrowLeft', 'ArrowRight'].includes(e.key)) return; e.preventDefault(); const tabs = [...nav.querySelectorAll('[role=tab]')], index = tabs.indexOf(document.activeElement); const next = tabs[(index + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length]; next.click(); next.focus(); };
   window.addEventListener('blackjack-settings-saved', () => { if (suppress) return; store.mode().envelope = RuleSettings.capture(); persist(); });
   $('advancedDialog').addEventListener('close', () => { if (current !== 'simulator') controllers[current].mount($('modeWorkspace')); });

@@ -2,16 +2,16 @@ const { test, expect } = require('@playwright/test');
 const mode = (page, name) => page.getByRole('tab', { name, exact: true }).click();
 test.beforeEach(async ({ page }) => { await page.goto('/'); });
 test('mode switching isolates settings, saves presets and transfers cloned configurations', async ({ page }) => {
-  await mode(page, 'Play'); await page.locator('#play-decks').fill('2'); await page.locator('#play-penetration').click();
-  await page.locator('#modePresetName').fill('Two deck practice'); await page.locator('#modeToolbar').getByRole('button', { name: 'Save', exact: true }).click();
-  await mode(page, 'Simulator'); await expect(page.locator('#decks')).toHaveValue('6'); await mode(page, 'Play'); await expect(page.locator('#play-decks')).toHaveValue('2');
-  await page.locator('#modeTransferTarget').selectOption('learn'); await page.getByRole('button', { name: 'Open configuration →' }).click(); await expect(page.locator('#learn-decks')).toHaveValue('2');
-  await page.locator('#learn-decks').fill('8'); await page.locator('#learn-penetration').click(); await mode(page, 'Play'); await expect(page.locator('#play-decks')).toHaveValue('2');
-  await page.reload(); await expect(page.locator('#play-decks')).toHaveValue('2'); await expect(page.locator('#modePreset')).toContainText('Two deck practice');
+  await mode(page, 'Play'); await page.getByRole('button', { name: 'New session', exact: true }).click(); await page.locator('#play-decks').fill('2'); await page.locator('#play-starting').click(); await page.locator('.mode-settings').getByRole('button', { name: 'Close', exact: true }).click();
+  await page.getByRole('button', { name: 'Presets & transfer' }).click(); await page.locator('#modePresetName').fill('Two deck practice'); await page.locator('#modeToolbar').getByRole('button', { name: 'Save', exact: true }).click(); await page.locator('#modeToolbar').getByRole('button', { name: 'Close', exact: true }).click();
+  await mode(page, 'Simulator'); await expect(page.locator('#decks')).toHaveValue('6'); await mode(page, 'Play'); await page.getByRole('button', { name: 'New session', exact: true }).click(); await expect(page.locator('#play-decks')).toHaveValue('2'); await page.locator('.mode-settings').getByRole('button', { name: 'Close', exact: true }).click();
+  await page.getByRole('button', { name: 'Presets & transfer' }).click(); await page.locator('#modeTransferTarget').selectOption('learn'); await page.getByRole('button', { name: 'Open configuration →' }).click(); await page.getByRole('button', { name: 'Learning settings' }).click(); await page.getByText('Table & strategy settings').click(); await expect(page.locator('#learn-decks')).toHaveValue('2');
+  await page.locator('#learn-decks').fill('8'); await page.locator('#learn-penetration').click(); await page.locator('.mode-settings').getByRole('button', { name: 'Done', exact: true }).click(); await mode(page, 'Play'); await page.getByRole('button', { name: 'New session', exact: true }).click(); await expect(page.locator('#play-decks')).toHaveValue('2'); await page.locator('.mode-settings').getByRole('button', { name: 'Close', exact: true }).click();
+  await page.reload(); await page.getByRole('button', { name: 'New session', exact: true }).click(); await expect(page.locator('#play-decks')).toHaveValue('2'); await page.locator('.mode-settings').getByRole('button', { name: 'Close', exact: true }).click(); await page.getByRole('button', { name: 'Presets & transfer' }).click(); await expect(page.locator('#modePreset')).toContainText('Two deck practice');
 });
 test('Play deals actual cards, offers legal actions, persists active state and settles wagers', async ({ page }) => {
   const errors = []; page.on('pageerror', e => errors.push(e.message));
-  await mode(page, 'Play'); await page.locator('#play-speed').selectOption('25'); await page.locator('#play-opponents').fill('0'); await page.locator('#play-seed').fill('12345');
+  await mode(page, 'Play'); await page.getByRole('button', { name: 'New session', exact: true }).click(); await page.getByRole('button', { name: 'Advanced settings', exact: true }).click(); await page.locator('#play-speed').selectOption('25'); await page.locator('#play-opponents').fill('0'); await page.locator('#play-seed').fill('12345'); await page.locator('.mode-settings-more').getByRole('button', { name: 'Done', exact: true }).click();
   await page.getByRole('button', { name: 'Start session', exact: true }).click(); await page.getByRole('button', { name: 'Deal', exact: true }).click();
   for (let i = 0; i < 10; i++) {
     await page.waitForFunction(() => [...document.querySelectorAll('.game-action-bar button')].some(b => !b.disabled && ['Stand', 'Decline', 'Next hand'].includes(b.textContent)));
@@ -36,7 +36,7 @@ test('Learn drills score errors, show explanations and retain progress after rel
   await page.reload(); const progress = await page.evaluate(() => BJWorkspace.store.mode('learn').progress.categories.cardValue); expect(progress.attempted).toBe(2); expect(progress.correct).toBe(1); expect(errors).toEqual([]);
 });
 test('Guided feedback honors session-end timing and reveals incorrect actions in review', async ({ page }) => {
-  await mode(page, 'Learn'); await page.locator('#learn-speed').selectOption('25'); await page.locator('#learn-opponents').fill('0'); await page.locator('#learn-seed').fill('12345'); await page.locator('#learn-timing').selectOption('sessionEnd');
+  await mode(page, 'Learn'); await page.getByRole('button', { name: 'Learning settings' }).click(); await page.getByText('Table & strategy settings').click(); await page.locator('#learn-speed').selectOption('25'); await page.locator('#learn-opponents').fill('0'); await page.locator('#learn-seed').fill('12345'); await page.locator('#learn-timing').selectOption('sessionEnd'); await page.locator('.mode-settings').getByRole('button', { name: 'Done', exact: true }).click();
   await page.getByRole('button', { name: 'Start guided session', exact: true }).click(); await page.getByRole('button', { name: 'Deal guided hand', exact: true }).click();
   await page.waitForFunction(() => [...document.querySelectorAll('.game-action-bar button')].some(b => !b.disabled && ['Stand', 'Decline insurance', 'Next guided hand'].includes(b.textContent)));
   if (await page.getByRole('button', { name: 'Decline insurance', exact: true }).count()) await page.getByRole('button', { name: 'Decline insurance', exact: true }).click();
@@ -74,12 +74,37 @@ test('Laboratory pauses, checkpoints all shards and resumes to completion', asyn
   await page.getByRole('button', { name: 'Resume experiment', exact: true }).click(); await expect(page.locator('.lab-completion')).toContainText('3/3 runs complete', { timeout: 30000 }); expect(errors).toEqual([]);
 });
 test('global reset clears separate mode state and does not save it again during unload', async ({ page }) => {
-  await mode(page, 'Play'); await page.locator('#play-decks').fill('2'); await page.locator('#play-penetration').click();
+  await mode(page, 'Play'); await page.getByRole('button', { name: 'New session', exact: true }).click(); await page.locator('#play-decks').fill('2'); await page.locator('#play-starting').click(); await page.locator('.mode-settings').getByRole('button', { name: 'Close', exact: true }).click(); await page.getByRole('button', { name: 'Presets & transfer' }).click();
   page.once('dialog', dialog => dialog.accept()); await page.getByRole('button', { name: 'Reset all modes', exact: true }).click();
-  await expect(page.locator('#decks')).toBeVisible(); await expect(page.locator('#decks')).toHaveValue('6'); await mode(page, 'Play'); await expect(page.locator('#play-decks')).toHaveValue('6');
+  await expect(page.locator('#decks')).toBeVisible(); await expect(page.locator('#decks')).toHaveValue('6'); await mode(page, 'Play'); await page.getByRole('button', { name: 'New session', exact: true }).click(); await expect(page.locator('#play-decks')).toHaveValue('6');
 });
 test('advanced guided estimation withholds the exact count and deck answers', async ({ page }) => {
-  await mode(page, 'Learn'); await page.locator('#learn-assistance').selectOption('advanced'); await page.getByRole('button', { name: 'Start guided session', exact: true }).click();
+  await mode(page, 'Learn'); await page.getByRole('button', { name: 'Learning settings' }).click(); await page.locator('#learn-assistance').selectOption('advanced'); await page.locator('.mode-settings').getByRole('button', { name: 'Done', exact: true }).click(); await page.getByRole('button', { name: 'Start guided session', exact: true }).click();
   await expect(page.locator('#guided-askDecks')).toBeVisible(); await expect(page.locator('.game-table-footer')).toContainText('Estimate decks from the shoe stack');
   await expect(page.locator('.game-table-footer')).toContainText('RC hidden'); await expect(page.locator('.game-table-footer')).toContainText('TC hidden'); await expect(page.locator('.game-table-footer')).not.toContainText('6.00 decks');
+});
+test('settings dialogs keep the workspace focused and return from advanced rules', async ({ page }) => {
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  await mode(page, 'Play');
+  await expect(page.locator('#modeWorkspace aside.mode-setup')).toHaveCount(0);
+  await expect(page.locator('#modeToolbar')).not.toBeVisible();
+  await page.getByRole('button', { name: 'New session', exact: true }).click();
+  await expect(page.locator('.mode-settings')).toBeVisible();
+  await expect(page.locator('#play-wager')).toHaveCount(0);
+  await page.locator('#play-decks').fill('4'); await page.locator('#play-starting').click();
+  await page.getByRole('button', { name: 'Advanced settings', exact: true }).click();
+  await expect(page.locator('.mode-settings-more')).toBeVisible();
+  await page.locator('.mode-settings-more').getByRole('button', { name: 'All rules & strategy' }).click();
+  await expect(page.locator('#advancedDialog')).toBeVisible(); await page.locator('#advancedCancel').click();
+  await expect(page.locator('.mode-settings-more')).toBeVisible();
+  await page.locator('.mode-settings-more').getByRole('button', { name: 'Done', exact: true }).click();
+  await expect(page.locator('#play-decks')).toHaveValue('4');
+  await page.locator('.mode-settings').getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(page.locator('#play-wager')).toHaveCount(0);
+  await mode(page, 'Learn'); await expect(page.locator('#modeWorkspace aside.mode-setup')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Learning settings' }).click(); await expect(page.locator('#learn-assistance')).toBeVisible();
+  await page.locator('.mode-settings').getByRole('button', { name: 'Done', exact: true }).click();
+  await mode(page, 'Laboratory'); await expect(page.getByText('Step 1 of 4')).toBeVisible();
+  await page.getByRole('button', { name: 'Strategy & table settings' }).click(); await expect(page.locator('#laboratory-decks')).toBeVisible();
+  expect(errors).toEqual([]);
 });
