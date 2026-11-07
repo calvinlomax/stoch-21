@@ -59,9 +59,8 @@
 
         <div class="divider">
         </div>
-        <div class="group-title">Rules &amp; strategy
-        </div>
-        <div class="field"><label for="strategy">Strategy for your seat</label><select id="strategy"><option value="basic">Basic-strategy table</option><option value="mimic">Dealer mimic: stand on 17</option><option value="stand">Always stand</option></select><small>This policy applies to all seats when variable opponents are off.</small>
+        <div class="rules-heading"><div class="group-title" id="rulesHeadingInfo">Rules &amp; strategy</div><button type="button" class="button" id="advancedOpen">Advanced</button></div><span id="advancedBadge" class="advanced-badge"></span>
+        <div class="field"><label for="strategy">Strategy for your seat</label><select id="strategy"><option value="basic">Basic-strategy table</option><option value="mimic">Dealer mimic: stand on 17</option><option value="stand">Always stand</option></select><small>Applies to all seats when independent opponents are off.</small>
         </div>
         <div class="fields">
           <div class="field"><label for="dealerRule">Dealer soft 17</label><select id="dealerRule"><option value="S17">Stand</option><option value="H17">Hit</option></select>
@@ -69,9 +68,9 @@
           <div class="field"><label for="pay">Blackjack pays</label><select id="pay"><option value="1.5">3 : 2</option><option value="1.2">6 : 5</option></select>
           </div>
         </div>
-        <div class="field" style="margin-top:10px"><label for="betMode">Bet sizing</label><select id="betMode"><option value="flat">Flat wager</option><option value="count">Hi-Lo true-count spread</option></select>
+        <div class="field" style="margin-top:10px"><label for="betMode">Bet sizing</label><select id="betMode"><option value="flat">Flat wager</option><option value="rcDiscrete">Discrete running count</option><option value="rcContinuous">Continuous running count</option><option value="tcDiscrete">Discrete true count</option><option value="tcContinuous">Continuous true count</option><option value="fractional">Fractional Kelly</option></select>
         </div>
-        <div class="field" id="spreadField" style="display:none"><label for="spread">Maximum bet multiplier</label><input id="spread" type="number" value="4" min="1" max="20" step="1"><small>Multiplier = clamp(floor(true count), 1, maximum).</small>
+        <div class="field" id="spreadField" style="display:none"><label for="spread">Maximum bet multiplier</label><input id="spread" type="number" value="4" min="1" max="1000000" step="1"><small>Opening wager cap relative to the base wager.</small>
         </div><label class="toggle"><input type="checkbox" id="showCount" checked><span>Show Hi-Lo count &amp; card effects</span></label>
 <label class="toggle"><input type="checkbox" id="humanOpponents" checked><span>Model different opponent skill levels and streak betting</span></label>
         <div class="divider">
@@ -317,11 +316,11 @@
             </summary>
             <p><b>Model.</b> Seeded Monte Carlo draws randomly from a finite shoe of standard 52-card decks, without replacement. A new shuffled shoe is prepared between rounds after the configured penetration is reached. If a shoe runs out before the round can finish, the simulator refunds that round’s wagers, tracks the exhaustion separately and opens a fresh shoe. Each session resets player balances and starts a fresh shoe. If every seat cannot meet the minimum, that session ends early.
             </p>
-            <p><b>Rules.</b> The dealer checks for blackjack, then follows the selected soft-17 rule. Players may double on their first two cards, split matching card values up to four hands, and double after splitting. Split aces receive one card each and cannot be resplit. Split 21 is not a natural blackjack. No surrender or insurance. A player without enough money to double or split uses the fallback decision. Stakes are capped at the available whole-dollar bankroll. No-limit mode permits negative balances.
+            <p><b>Rules.</b> The standard settings retain the original game. Advanced settings configure dealer thresholds, hole-card and peek rules, double after split, maximum hands, late surrender, and natural payouts. Split aces receive one card and cannot be resplit; split 21 is not a natural. Insurance is offered by the count-deviation strategy when its index is reached. The dealer’s blackjack takes priority over surrender. All opening wagers follow the selected table, spread, bankroll, and chip constraints. With bankroll limits disabled, balances may become negative.
             </p>
-            <p><b>Strategy.</b> The basic-strategy option is a fixed multi-deck strategy table, with soft-17 adjustments. It is not optimized for every possible deck count, rule combination, bankroll constraint, or shoe composition. Dealer mimic and always stand are fixed comparison policies. With variable opponents enabled, the four opponent seats start from basic strategy and use different error rates on eligible decisions. After two consecutive profitable or losing rounds, some profiles sometimes increase the next stake, up to double, subject to the bankroll. Break-even rounds leave the streak unchanged. These are illustrative behaviors. The optional Hi-Lo spread sizes a bet at the start of each round using floor(running count ÷ decks remaining), clamped from 1 to the maximum multiplier. True count = running count ÷ (cards remaining / 52). Displaying the count and using it for betting are separate settings.
+            <p><b>Strategy.</b> The reference basic-strategy table is a multi-deck policy with soft-17 adjustments. Advanced settings add custom matrices, count deviations, and composition-dependent EV estimates, plus independent opponent play and betting. The original Hi-Lo spread is “Discrete true count.” Count display never changes counting or betting state. The information panels explain each model and distinguish exact accounting from approximate advantage and EV calculations.
             </p>
-            <p><b>Estimates.</b> Win / loss / push shares use settled hands as the denominator. ROI = total player net profit ÷ total amount wagered, including added split and double stakes. Natural blackjack count includes pushes. The bankroll graph is for the current session; statistics pool all sessions. The histogram, median, and 5th–95th percentiles use completed sessions. After at least 30 completed sessions, the 95% session-ROI interval uses a normal approximation and a session-level ratio-estimator standard error. Let X be session profit, Y session wager, R = ΣX/ΣY, and Z = X − RY. The interval is R ± 1.96 × s(Z)/(√sessions × mean(Y)). This accounts for dependence within each session; it remains an approximation and may be unreliable for skewed outcomes or few sessions. “Any seat below minimum” counts sessions ending with at least one seat unable to make the table minimum. Outcomes within a shoe and hands sharing a dealer are dependent, so the displayed rates are estimates, not exact theoretical house-edge values. Brownian motion is not used: discrete card draws and blackjack payoffs are modeled directly.
+            <p><b>Estimates.</b> Win / loss / push shares use settled hands as the denominator. ROI = total player net profit ÷ total amount wagered, including added split and double stakes and insurance. Natural blackjack count includes pushes. The bankroll graph is for the current session; statistics pool all sessions. The histogram, median, and 5th–95th percentiles use completed sessions. After at least 30 completed sessions, the 95% session-ROI interval uses a normal approximation and a session-level ratio-estimator standard error. Let X be session profit, Y session wager, R = ΣX/ΣY, and Z = X − RY. The interval is R ± 1.96 × s(Z)/(√sessions × mean(Y)). This accounts for dependence within each session; it remains an approximation and may be unreliable for skewed outcomes or few sessions. “Any seat below minimum” counts sessions ending with at least one seat unable to make the table minimum. Outcomes within a shoe and hands sharing a dealer are dependent, so the displayed rates are estimates, not exact theoretical house-edge values. Brownian motion is not used: discrete card draws and blackjack payoffs are modeled directly.
             </p>
           </details>
         </div>
@@ -372,7 +371,18 @@
       <form method="dialog"><button class="button primary">Close</button>
       </form>
     </dialog>
+  <dialog id="advancedDialog" class="advanced-dialog" aria-labelledby="advancedTitle">
+    <div class="advanced-header"><h2 id="advancedTitle">Advanced rules &amp; strategy</h2><p class="note">Changes apply to the next run. Apply to keep edits, or Cancel to discard them.</p>
+      <div class="settings-toolbar"><input id="advancedSearch" type="search" placeholder="Search settings…" aria-label="Search all advanced settings"><select id="advancedPreset" aria-label="Load preset"><option value="">Load preset…</option><option value="default">Original defaults</option><option value="counter">Hi-Lo counter</option><option value="kelly">Quarter Kelly</option><option value="mixed">Mixed opponents</option><option value="saved">Saved preset</option></select><button type="button" class="button" id="advancedSave">Save preset</button><button type="button" class="button" id="advancedExport">Export</button><label class="button import-button">Import<input type="file" id="advancedImport" accept=".json,application/json" aria-label="Import settings JSON"></label></div><p id="advancedNotice" role="status" class="note"></p>
+    </div>
+    <div class="advanced-layout"><nav id="advancedNav" aria-label="Advanced settings sections"></nav><div class="advanced-body"><div id="advancedSectionTitle"></div><div class="settings-grid" id="advancedFields"></div><p id="advancedNoMatch" hidden>No matching settings.</p><div id="advancedExtra"></div><div id="advancedPreview"></div></div></div>
+    <div class="advanced-footer"><p id="advancedError" role="alert"></p><div class="settings-toolbar"><button type="button" class="button" id="advancedResetSection">Reset section</button><button type="button" class="button" id="advancedResetAll">Reset all</button><span class="toolbar-spacer"></span><button type="button" class="button" id="advancedCancel">Cancel</button><button type="button" class="button primary" id="advancedApply">Apply</button></div></div>
+  </dialog>
+  <dialog id="settingsHelp" class="settings-help" aria-labelledby="settingsHelpTitle"><h3 id="settingsHelpTitle"></h3><div id="settingsHelpBody"></div><button type="button" id="settingsHelpClose" class="button primary">Close</button></dialog>
+  <script src="./rules.js"></script>
+  <script src="./engine.js"></script>
   <script src="./script.js"></script>
+  <script src="./settings.js"></script>
   </body>
 </html>
 

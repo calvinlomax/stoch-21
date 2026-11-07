@@ -1,0 +1,7 @@
+node_modules/
+test-results/
+playwright-report/
+.DS_Store
+
+# Local-only ML code, environments, datasets, checkpoints, logs, and reports.
+/ML/
