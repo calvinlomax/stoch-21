@@ -62,9 +62,12 @@ const BJLab = (() => {
   }
   function design(base, settings) {
     const s = M.clone(settings);
+    const multi = s.multiEnabled === true;
+    const strategies = multi ? s.strategies : null;
+    if (multi && (!Array.isArray(strategies) || strategies.length < 2 || strategies.length > 5 || new Set(strategies.map(x => x.id)).size !== strategies.length || strategies.some(x => !x.id || !x.config))) throw Error('Add between two and five distinct strategies.');
     for (const [key, lo, hi] of [['environments', 1, 128], ['sessions', 1, 20], ['hands', 1, 100000], ['workers', 1, 8], ['tickHands', 1, 100]])
       if (!Number.isInteger(s[key]) || s[key] < lo || s[key] > hi) throw Error(`${key} must be an integer ${lo}–${hi}.`);
-    if (s.environments * s.sessions * s.hands * (s.compare ? 2 : 1) > 2000000) throw Error('Limit Laboratory to 2,000,000 total requested rounds.');
+    if (s.environments * s.sessions * s.hands * (multi ? strategies.length : s.compare ? 2 : 1) > 2000000) throw Error('Limit Laboratory to 2,000,000 total requested rounds across all strategies.');
     if (!Number.isInteger(s.seed) || s.seed < 0 || s.seed > 4294967295 || !(s.confidence >= .8 && s.confidence <= .999)) throw Error('Check seed and confidence level.');
     if (!['stop', 'rebuy', 'unlimited'].includes(s.bankruptcy)) throw Error('Unknown bankruptcy behavior.');
     for (const key of ['stopProfit', 'stopLoss', 'stopDrawdown']) if (!Number.isFinite(s[key]) || s[key] < 0) throw Error('Stop conditions must be nonnegative.');
@@ -79,6 +82,7 @@ const BJLab = (() => {
         c.payout = base.rules.payout.numerator / base.rules.payout.denominator;
         try {
           for (const d of PARAMETERS) {
+            if (multi && (d.key === 'starting' || d.key === 'countSystem' || (d.key.startsWith('rules.limits.') && d.key !== 'rules.limits.tableMax'))) continue;
             const value = sample(s.parameters[d.key], d, get(c, d.key), rng);
             if (d.values ? !d.values.includes(value) : !Number.isFinite(value) || value < d.min || value > d.max || (d.kind === 'integer' && !Number.isInteger(value))) throw Error(d.label + ': invalid value.');
             set(c, d.key, value);
@@ -95,6 +99,23 @@ const BJLab = (() => {
       environments.push({ index, config: M.clone(c) });
       for (let session = 0; session < s.sessions; session++) {
         const seed = (c.seed + Math.imul(session, 0x85ebca6b)) >>> 0;
+        if (multi) {
+          for (const strategy of strategies) {
+            const cfg = M.clone(c), source = strategy.config;
+            cfg.rules.play = M.clone(source.rules.play); cfg.rules.bet = M.clone(source.rules.bet);
+            cfg.rules.limits = { ...M.clone(source.rules.limits), tableMax: c.rules.limits.tableMax, terminate: 'you' };
+            cfg.rules.analytics = { ...M.clone(source.rules.analytics), mode: c.rules.analytics.mode };
+            cfg.starting = source.starting; cfg.baseBet = source.baseBet; cfg.countSystem = source.countSystem;
+            cfg.finite = s.bankruptcy === 'unlimited' ? false : source.finite;
+            cfg.seats = M.seats(c.opponents, c.starting, c.heroSeat);
+            cfg.seats.find(p => p.seat === c.heroSeat).amount = source.starting;
+            cfg.seed = seed;
+            R.validate(cfg.rules);
+            if (cfg.baseBet < cfg.minBet || cfg.starting < cfg.minBet) throw Error(`Strategy ${strategy.name}: base wager and bankroll must meet each environment's table minimum.`);
+            jobs.push({ id: `${index}:${session}:${strategy.id}`, environment: index, session, arm: 'strategy', strategyId: strategy.id, config: cfg });
+          }
+          continue;
+        }
         for (const arm of s.compare ? ['strategy', 'control'] : ['strategy']) {
           const cfg = M.clone(c); cfg.seed = arm === 'control' && !s.paired ? (seed ^ 0xc2b2ae35) >>> 0 : seed;
           if (arm === 'control') { cfg.rules.play.mode = s.controlPlay; cfg.rules.bet.mode = s.controlBet; R.validate(cfg.rules); }

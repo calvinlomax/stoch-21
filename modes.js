@@ -103,11 +103,12 @@
     const dpr = Math.min(2, devicePixelRatio || 1), w = rect.width, h = rect.height;
     canvas.width = w * dpr; canvas.height = h * dpr; const ctx = canvas.getContext('2d'); ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
     const l = 58, r = 15, t = 12, b = 30; let min = 0, max = 0, maxX = 1;
-    for (const s of series) for (const p of s.points) if (Number.isFinite(p.y)) { min = Math.min(min, p.y); max = Math.max(max, p.y); maxX = Math.max(maxX, p.x); }
+    for (const s of series) for (const p of s.points) if (Number.isFinite(p.y)) { min = Math.min(min, p.y, Number.isFinite(p.low) ? p.low : p.y); max = Math.max(max, p.y, Number.isFinite(p.high) ? p.high : p.y); maxX = Math.max(maxX, p.x); }
     if (min === max) { max += 1; min -= 1; } const pad = (max - min) * .07; max += pad; min -= pad;
     const px = x => l + (w - l - r) * x / maxX, py = y => t + (h - t - b) * (max - y) / (max - min);
     ctx.font = '10px system-ui'; ctx.fillStyle = '#9da2a6'; ctx.textAlign = 'right';
     for (let i = 0; i < 4; i++) { const y = t + (h - t - b) * i / 3, value = max - (max - min) * i / 3; ctx.strokeStyle = '#34373a'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(l, y); ctx.lineTo(w - r, y); ctx.stroke(); ctx.fillText(options.unit === '%' ? (value * 100).toFixed(1) + '%' : value.toLocaleString('en-US', { maximumFractionDigits: 1 }), l - 6, y + 3); }
+    for (const s of series) { const points = s.points.filter(p => Number.isFinite(p.low) && Number.isFinite(p.high)); if (points.length < 2) continue; ctx.beginPath(); points.forEach((p, i) => i ? ctx.lineTo(px(p.x), py(p.high)) : ctx.moveTo(px(p.x), py(p.high))); for (const p of points.slice().reverse()) ctx.lineTo(px(p.x), py(p.low)); ctx.closePath(); ctx.fillStyle = s.color; ctx.globalAlpha = .14; ctx.fill(); }
     for (const [index, s] of series.entries()) { ctx.beginPath(); ctx.strokeStyle = s.color || `hsl(${(index * 137.5) % 360} 40% 64%)`; ctx.globalAlpha = s.alpha ?? (series.length > 10 ? .5 : 1); ctx.lineWidth = s.width || 1; let started = false;
       for (const p of s.points) { if (!Number.isFinite(p.y)) continue; if (!started) ctx.moveTo(px(p.x), py(p.y)); else ctx.lineTo(px(p.x), py(p.y)); started = true; } ctx.stroke(); }
     ctx.globalAlpha = 1; ctx.fillStyle = '#9da2a6'; ctx.textAlign = 'left'; ctx.fillText('0', l, h - 9); ctx.textAlign = 'right'; ctx.fillText(Math.round(maxX) + ' rounds', w - r, h - 9);
@@ -126,7 +127,7 @@
     const rect = canvas.getBoundingClientRect(); if (!rect.width || !rect.height) return; const dpr = Math.min(devicePixelRatio || 1, 2), w = rect.width, h = rect.height;
     canvas.width = w * dpr; canvas.height = h * dpr; const ctx = canvas.getContext('2d'); ctx.scale(dpr, dpr); const peak = Math.max(1e-6, ...values.map(v => Math.abs(v.value))), bw = (w - 32) / Math.max(1, values.length), mid = values.some(v => v.value < 0) ? (h - 35) / 2 : h - 35;
     ctx.strokeStyle = '#555'; ctx.beginPath(); ctx.moveTo(16, mid); ctx.lineTo(w - 16, mid); ctx.stroke();
-    values.forEach((v, i) => { const bh = v.value / peak * (values.some(x => x.value < 0) ? (h - 45) / 2 : h - 45); ctx.fillStyle = v.value >= 0 ? '#a5bfe5' : '#c98b98'; ctx.fillRect(17 + i * bw, Math.min(mid, mid - bh), Math.max(1, bw - 3), Math.abs(bh)); });
+    values.forEach((v, i) => { const bh = v.value / peak * (values.some(x => x.value < 0) ? (h - 45) / 2 : h - 45); ctx.fillStyle = v.color || (v.value >= 0 ? '#a5bfe5' : '#c98b98'); ctx.fillRect(17 + i * bw, Math.min(mid, mid - bh), Math.max(1, bw - 3), Math.abs(bh)); });
     ctx.fillStyle = '#9da2a6'; ctx.font = '10px system-ui'; ctx.fillText(values[0]?.label || '', 16, h - 10); ctx.textAlign = 'right'; ctx.fillText(values.at(-1)?.label || '', w - 16, h - 10);
     canvas.onpointermove = e => { const index = Math.floor((e.offsetX - 16) / bw), v = values[index]; if (v && options.caption) options.caption.textContent = `${v.label}: ${v.value.toFixed(4)}${v.ci ? ` · interval ${v.ci.map(x => x.toFixed(4)).join(' to ')}` : ''}`; };
     canvas.onclick = e => { const v = values[Math.floor((e.offsetX - 16) / bw)]; if (v && options.select) options.select(v); };

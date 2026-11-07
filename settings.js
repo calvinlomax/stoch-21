@@ -7,7 +7,7 @@ const RuleSettings = (() => {
   let current = R.defaults(),
     draftSettings = null,
     active = "bet",
-    matrix = "hard";
+    matrix = "hard", scope = null, draftExtras = {};
   const sections = {
     bet: "Bet sizing",
     play: "Strategy for your seat",
@@ -366,6 +366,7 @@ const RuleSettings = (() => {
     };
   }
   function get(path) {
+    if (path.startsWith('$')) return draftExtras[path.slice(1)];
     if (!path.includes("."))
       return path === "finite"
         ? draftSettings.fields[path]
@@ -383,6 +384,7 @@ const RuleSettings = (() => {
     return draftSettings.rules[a][b];
   }
   function set(path, value) {
+    if (path.startsWith('$')) { draftExtras[path.slice(1)] = value; return; }
     if (!path.includes(".")) draftSettings.fields[path] = value;
     else {
       let [a, b] = path.split(".");
@@ -779,8 +781,21 @@ const RuleSettings = (() => {
     syncStandard();
     persist();
   }
-  function open() {
-    draftSettings = capture();
+  function open(options = null) {
+    scope = options && !options.target ? options : null;
+    draftSettings = scope?.envelope ? copy(scope.envelope) : capture();
+    draftExtras = copy(scope?.extras || {});
+    const pages = scope ? ['general', ...scope.pages] : Object.keys(sections);
+    active = scope ? 'general' : (sections[active] ? active : 'bet');
+    $('advancedNav').replaceChildren();
+    for (const key of pages) {
+      const b = el('button', { type: 'button', 'data-section': key }, key === 'general' ? 'General' : scope?.pageNames?.[key] || sections[key]);
+      b.onclick = () => { active = key; $('advancedSearch').value = ''; renderSection(); };
+      $('advancedNav').append(b);
+    }
+    $('advancedResetSection').hidden = !!scope;
+    $('advancedResetAll').hidden = !!scope;
+    $('advancedTitle').textContent = scope?.title || 'Advanced rules & strategy';
     $("advancedSearch").value = "";
     renderSection();
     $("advancedDialog").showModal();
@@ -801,7 +816,7 @@ const RuleSettings = (() => {
     let box = $("advancedFields");
     box.replaceChildren();
     $("advancedSectionTitle").replaceChildren(
-      heading("h3", sections[active], active),
+      heading("h3", active === 'general' ? 'General' : scope?.pageNames?.[active] || sections[active], active),
     );
     for (const b of $("advancedNav").children)
       b.setAttribute(
@@ -810,13 +825,15 @@ const RuleSettings = (() => {
       );
     if ($("advancedSearch").value.trim()) {
       let seen = new Set();
-      for (const rows of Object.values(schema))
+      for (const rows of (scope ? [scope.generalRows, ...scope.pages.map(page => schema[page])] : Object.values(schema)))
         for (const row of rows)
-          if (!seen.has(row[0])) {
+          if (!seen.has(row[0]) && !scope?.excludePaths?.includes(row[0])) {
             seen.add(row[0]);
             box.append(makeField(row));
           }
-    } else for (const row of schema[active]) box.append(makeField(row));
+    } else for (const row of (active === 'general' ? scope.generalRows : schema[active])) {
+      if (!scope?.excludePaths?.includes(row[0])) box.append(makeField(row));
+    }
     $("advancedExtra").replaceChildren();
     if (active === "bet") {
       lookupEditor("lookup", "Count-to-wager lookup / breakpoints", true);
@@ -1000,6 +1017,13 @@ const RuleSettings = (() => {
       ),
     );
     $("advancedExtra").append(group);
+    if (scope?.decisionRules) {
+      const rules = el('details', { class: 'settings-subsection' }), summary = el('summary', {}, 'Custom decision rules'), editor = el('textarea', { class: 'custom-rule-editor', 'aria-label': 'Custom decision rules JSON' });
+      editor.value = JSON.stringify(draftSettings.rules.play.decisionRules || [], null, 2);
+      const apply = el('button', { type: 'button', class: 'button' }, 'Apply custom decision rules');
+      apply.onclick = () => { try { const parsed = JSON.parse(editor.value); const old = draftSettings.rules.play.decisionRules; draftSettings.rules.play.decisionRules = parsed; try { R.validate(draftSettings.rules); } catch (error) { draftSettings.rules.play.decisionRules = old; throw error; } draftSettings.rules.play.mode = 'custom'; renderSection(); } catch (error) { $('advancedError').textContent = error.message; } };
+      rules.append(summary, editor, apply); $('advancedExtra').append(rules);
+    }
     if (get("play.mode") === "deviations") {
       let g = el("section", { class: "settings-subsection" });
       g.append(heading("h4", "Count deviations", "play.deviations"));
@@ -1944,7 +1968,8 @@ const RuleSettings = (() => {
     $("advancedCancel").onclick = () => $("advancedDialog").close();
     $("advancedApply").onclick = () => {
       if (validateDraft()) {
-        applyEnvelope(draftSettings);
+        if (scope?.onApply) scope.onApply(copy(draftSettings), copy(draftExtras));
+        else applyEnvelope(draftSettings);
         $("advancedDialog").close();
       }
     };

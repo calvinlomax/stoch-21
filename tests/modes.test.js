@@ -38,6 +38,20 @@ test('randomized designs and synchronized worker shards are deterministic and re
   for (let i = 0; i < 3; i++) assert.deepEqual(s1.tick(), s2.tick());
   assert.equal(a.jobs[0].config.seed, a.jobs[1].config.seed);
 });
+test('multi-strategy designs share environments and seeds while preserving independent strategy settings', () => {
+  const first = config({ starting: 5000, baseBet: 25 }), second = config({ starting: 12000, baseBet: 50, countSystem: 'none' });
+  second.rules = R.defaults(); second.rules.play.mode = 'stand'; second.rules.bet.mode = 'flat'; second.rules.limits.tableMax = 3000;
+  const settings = { ...L.defaults(), multiEnabled: true, environments: 3, sessions: 2, hands: 10, tickHands: 2,
+    strategies: [{ id: 'a', name: 'First', config: first }, { id: 'b', name: 'Second', config: second }] };
+  const design = L.design(config(), settings); assert.equal(design.jobs.length, 12); assert.deepEqual(design, L.design(config(), settings));
+  for (let i = 0; i < design.jobs.length; i += 2) {
+    const [a, b] = design.jobs.slice(i, i + 2); assert.equal(a.environment, b.environment); assert.equal(a.session, b.session); assert.equal(a.config.seed, b.config.seed); assert.equal(a.config.decks, b.config.decks); assert.equal(a.config.rules.limits.tableMax, b.config.rules.limits.tableMax);
+    assert.equal(a.config.starting, 5000); assert.equal(b.config.starting, 12000); assert.equal(b.config.rules.play.mode, 'stand'); assert.equal(b.config.baseBet, 50); assert.equal(b.config.countSystem, 'none');
+  }
+  const shard = new L.Shard(design.jobs, design.settings); shard.tick(); const saved = shard.dump(), restored = new L.Shard(design.jobs, design.settings); restored.restore(saved); assert.deepEqual(shard.tick(), restored.tick());
+  assert.throws(() => L.design(config(), { ...settings, strategies: [settings.strategies[0]] }), /two and five/);
+  assert.throws(() => L.design(config(), { ...settings, hands: 100000, environments: 128, sessions: 20 }), /2,000,000/);
+});
 test('cluster intervals merge common seeds and use correct small-sample critical values', () => {
   assert.ok(Math.abs(L.tCritical(.95, 1) - 12.706204736) < 1e-5); assert.ok(Math.abs(L.tCritical(.95, 29) - 2.045229642) < 1e-5);
   const jobs = [0, 1, 2].map(i => ({ environment: i, arm: 'strategy', config: { seed: 1 }, stats: { profit: 10, wager: 100, rounds: 1, squares: 100, drawdown: 0, largestWager: 100, openingWager: 100 } }));
