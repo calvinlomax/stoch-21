@@ -330,6 +330,8 @@ const RuleSettings = (() => {
     ],
   };
   const rootIds = [
+    "heroSeat",
+    "countSystem",
     "decks",
     "penetrationMode",
     "penetration",
@@ -606,6 +608,8 @@ const RuleSettings = (() => {
     };
     R.validate(normalized.rules);
     const f = normalized.fields;
+    if (!Number.isInteger(+f.heroSeat) || +f.heroSeat < 0 || +f.heroSeat > 4) throw Error('Invalid seating position.');
+    if (!['hiLo', 'hiOptI', 'none'].includes(f.countSystem)) throw Error('Invalid count system.');
     for (const [key, lo, hi] of [
       ["decks", 1, 8],
       ["minBet", 1, 1000000],
@@ -757,6 +761,7 @@ const RuleSettings = (() => {
         "blackjack.settings.v2",
         JSON.stringify(validateEnvelope(capture())),
       );
+      window.dispatchEvent(new CustomEvent('blackjack-settings-saved'));
     } catch {
       /* Incomplete drafts and unavailable storage do not interrupt editing. */
     }
@@ -1987,7 +1992,7 @@ const RuleSettings = (() => {
       if (!validateDraft()) return;
       try {
         localStorage.setItem(
-          "blackjack.preset.v2",
+          "blackjack.preset.v2." + (window.BJWorkspace?.active || "simulator"),
           JSON.stringify(draftSettings),
         );
         $("advancedNotice").textContent = "Saved this preset on this device.";
@@ -2001,7 +2006,7 @@ const RuleSettings = (() => {
       if (!type) return;
       if (type === "saved") {
         try {
-          let saved = localStorage.getItem("blackjack.preset.v2");
+          let saved = localStorage.getItem("blackjack.preset.v2." + (window.BJWorkspace?.active || "simulator")) || ((window.BJWorkspace?.active || "simulator") === "simulator" ? localStorage.getItem("blackjack.preset.v2") : null);
           if (!saved) throw Error("No saved preset on this device.");
           draftSettings = validateEnvelope(JSON.parse(saved));
         } catch (error) {
@@ -2106,6 +2111,8 @@ const RuleSettings = (() => {
   }
   init();
   return {
+    math,
+    typeset,
     get: () => copy(current),
     open,
     help,

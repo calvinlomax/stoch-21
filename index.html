@@ -3,8 +3,9 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Blackjack Lab — simulator</title>
+    <title>Blackjack Lab — Play, Learn, Laboratory &amp; Simulator</title>
     <link rel="stylesheet" href="./styles.css">
+    <link rel="stylesheet" href="./modes.css">
   </head>
   <body>
 
@@ -17,7 +18,11 @@
       </div>
     </header>
 
-    <div class="layout">
+    <nav id="modeNavigation" class="mode-navigation" aria-label="Game modes"></nav>
+    <div id="modeToolbar" class="mode-toolbar"></div>
+    <div id="modeNotice" class="mode-notice" role="status" aria-live="polite"></div>
+    <div id="modeWorkspace" hidden></div>
+    <div class="layout" id="simulatorWorkspace">
       <aside class="sidebar">
         <div class="side-title">Simulation setup
         </div>
@@ -54,6 +59,7 @@
         </div>
         <div class="field"><label for="starting">Default starting balance $</label><input type="number" id="starting" value="10000" min="1" max="100000000" step="1"><small>Leave a seat’s balance blank to use this amount.</small>
         </div>
+        <div class="field"><label for="heroSeat">Your seating position</label><select id="heroSeat"><option value="0">First seat</option><option value="1">Second seat</option><option value="2" selected>Center seat</option><option value="3">Fourth seat</option><option value="4">Last seat</option></select></div>
         <div id="seatConfig">
         </div><label class="toggle"><input type="checkbox" id="finite" checked><span>Enforce bankroll limits</span></label>
 
@@ -70,6 +76,7 @@
         </div>
         <div class="field" style="margin-top:10px"><label for="betMode">Bet sizing</label><select id="betMode"><option value="flat">Flat wager</option><option value="rcDiscrete">Discrete running count</option><option value="rcContinuous">Continuous running count</option><option value="tcDiscrete">Discrete true count</option><option value="tcContinuous">Continuous true count</option><option value="fractional">Fractional Kelly</option></select>
         </div>
+        <div class="field"><label for="countSystem">Count system</label><select id="countSystem"><option value="hiLo">Hi-Lo</option><option value="hiOptI">Hi-Opt I</option><option value="none">No counting</option></select></div>
         <div class="field" id="spreadField" style="display:none"><label for="spread">Maximum bet multiplier</label><input id="spread" type="number" value="4" min="1" max="1000000" step="1"><small>Opening wager cap relative to the base wager.</small>
         </div><label class="toggle"><input type="checkbox" id="showCount" checked><span>Show Hi-Lo count &amp; card effects</span></label>
 <label class="toggle"><input type="checkbox" id="humanOpponents" checked><span>Model different opponent skill levels and streak betting</span></label>
@@ -383,6 +390,11 @@
   <script src="./engine.js"></script>
   <script src="./script.js"></script>
   <script src="./settings.js"></script>
+  <script src="./modes-core.js"></script>
+  <script src="./laboratory-core.js"></script>
+  <script src="./learning-ui.js"></script>
+  <script src="./laboratory-ui.js"></script>
+  <script src="./modes.js"></script>
   </body>
 </html>
 

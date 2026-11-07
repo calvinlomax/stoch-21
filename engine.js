@@ -19,12 +19,14 @@ const RANKS = [
 const SUITS = ["clubs", "diamonds", "hearts", "spades"];
 function seeded(seed) {
   let a = seed >>> 0;
-  return function () {
+  const random = function () {
     a = (a + 0x6d2b79f5) | 0;
     let t = Math.imul(a ^ (a >>> 15), 1 | a);
     t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+  Object.defineProperty(random, 'state', { get: () => a >>> 0, set: value => { a = value | 0; } });
+  return random;
 }
 function hiLo(card) {
   return card.rank === "ace" ||
@@ -33,6 +35,12 @@ function hiLo(card) {
     : +card.rank >= 2 && +card.rank <= 6
       ? 1
       : 0;
+}
+function countValue(card, system = "hiLo") {
+  if (system === "none") return 0;
+  if (system === "hiOptI")
+    return ["3", "4", "5", "6"].includes(card.rank) ? 1 : rankValue(card.rank) === 10 ? -1 : 0;
+  return hiLo(card);
 }
 function rankValue(rank) {
   return rank === "ace"
@@ -179,6 +187,10 @@ function policyAction(mode, h, up, opts, r, tc = 0, rng = () => 0.5) {
       }
     }
   }
+  if (['custom', 'deviations'].includes(mode)) for (const row of r.play.decisionRules || []) {
+    if ((row.type === 'any' || row.type === type) && v.total >= row.minTotal && v.total <= row.maxTotal &&
+      row.upcards.includes(u) && tc >= row.minTC && tc <= row.maxTC) { action = row.action; break; }
+  }
   return legalAction(action, h, up, opts, opts.h17);
 }
 // Gaussian samples use percentage points. Rejection sampling avoids boundary spikes.
@@ -245,6 +257,7 @@ class BlackjackSimulation {
     this.sessionIndex = 1;
     this.finished = false;
     this.pendingSessionEnd = false;
+    this.roundStartBalances = null;
     this.beginSession();
   }
   shuffle(a) {
@@ -253,6 +266,23 @@ class BlackjackSimulation {
       [a[i], a[j]] = [a[j], a[i]];
     }
     return a;
+  }
+  dump() {
+    return { version: 1, state: JSON.parse(JSON.stringify(this)), random: {
+      rng: this.rng.state, cutRng: this.cutRng.state, behaviorRng: this.behaviorRng.state } };
+  }
+  static restore(saved) {
+    if (saved?.version !== 1 || !saved.state?.config || !saved.random) throw Error('Invalid saved simulator.');
+    const sim = new BlackjackSimulation(saved.state.config);
+    for (const key of Object.keys(sim)) if (!['rng', 'cutRng', 'behaviorRng'].includes(key) && Object.hasOwn(saved.state, key))
+      sim[key] = JSON.parse(JSON.stringify(saved.state[key]));
+    if (!Array.isArray(sim.shoe) || sim.shoe.length > 416 || !Array.isArray(sim.players) || sim.players.length > 5 ||
+      sim.shoe.some(c => !RANKS.includes(c.rank) || !SUITS.includes(c.suit)) || sim.players.some(p => !Number.isFinite(p.balance))) throw Error('Invalid saved shoe or bankroll.');
+    for (const name of ['rng', 'cutRng', 'behaviorRng']) {
+      if (!Number.isInteger(saved.random[name])) throw Error('Invalid saved random state.');
+      sim[name].state = saved.random[name];
+    }
+    return sim;
   }
   makeShoe() {
     let a = [];
@@ -273,7 +303,7 @@ class BlackjackSimulation {
         streak: 0,
         progression: 0,
         thought: "",
-        profile: Rules.profile(this.rules, s.seat, this.behaviorRng),
+        profile: Rules.profile(this.rules, s.seat, this.behaviorRng, this.config.heroSeat ?? 2),
       }));
     for (const p of this.players)
       if (p.profile?.bankroll != null)
@@ -314,7 +344,7 @@ class BlackjackSimulation {
   }
   snap(fx) {
     return {
-      dealer: this.dealer.map((c) => ({ ...c })),
+      dealer: this.dealer.map((c, i) => this.holeHidden && i === 1 ? { hidden: true } : ({ ...c })),
       holeHidden: this.holeHidden,
       players: this.players.map((p) => ({
         seat: p.seat,
@@ -347,11 +377,24 @@ class BlackjackSimulation {
     };
   }
   playRound(trace = false) {
+    const round = this.roundFlow(trace);
+    const result = round.next();
+    if (!result.done) throw Error("An automated round unexpectedly requested input.");
+    return result.value;
+  }
+  abortUnstartedRound() {
+    if (!this.roundStartBalances) return;
+    this.players.forEach((p, i) => { p.balance = this.roundStartBalances[i]; p.hands = []; p.insurance = 0; });
+    this.dealer = []; this.holeHidden = true; this.roundStartBalances = null;
+  }
+  *roundFlow(trace = false, interactiveSeat = null) {
     if (this.finished || this.pendingSessionEnd) return null;
     if (this.cutReached) this.openShoe();
     let startBalances = this.players.map((p) => p.balance),
       events = [],
       dealer = (this.dealer = []);
+    this.roundStartBalances = startBalances;
+    const openingCount = this.count, openingPenetration = 1 - this.shoe.length / this.shoeSize;
     this.holeHidden = true;
     const snap = (fx) => {
       if (trace) events.push(this.snap(fx));
@@ -365,6 +408,7 @@ class BlackjackSimulation {
         npcDeviations: this.stats.npcDeviations,
       };
     try {
+      for (const p of this.players) { p.hands = []; p.roundActions = {}; p.roundInsurance = 0; }
       for (const p of this.players) {
         p.hands = [];
         p.thought = "";
@@ -380,7 +424,16 @@ class BlackjackSimulation {
           seatMax: p.profile?.max,
           countSamples: this.countSamples,
         };
-        const desired = Rules.opponentBet(this.rules, p, ctx, this.behaviorRng);
+        let desired = Rules.opponentBet(this.rules, p, ctx, this.behaviorRng);
+        if (p.seat === interactiveSeat) {
+          const suggested = Rules.constrain(this.rules, desired, ctx) / 100;
+          desired = yield { kind: "bet", seat: p.seat, suggested, balance: p.balance,
+            minimum: this.config.minBet, maximum: Rules.constrain(this.rules, this.rules.limits.tableMax, ctx) / 100,
+            context: { ...ctx, countSamples: [...this.countSamples] }, snapshot: this.snap(null), events: [...events] };
+          if (!Number.isFinite(desired) || desired < this.config.minBet ||
+              Math.abs(Rules.constrain(this.rules, desired, ctx) - Math.round(desired * 100)) > 0)
+            throw Error("Wager must satisfy table, bankroll, spread, and chip limits.");
+        }
         let stake = Rules.constrain(this.rules, desired, ctx);
         if (
           p.profile &&
@@ -433,7 +486,7 @@ class BlackjackSimulation {
           seat: p ? p.seat : "dealer",
           hand: p ? p.hands.indexOf(h) : 0,
           card: (p ? h.cards : dealer).length - 1,
-          delta: hidden ? null : hiLo(c),
+          delta: hidden ? null : countValue(c, this.config.countSystem),
         });
       };
       snap(null);
@@ -448,15 +501,18 @@ class BlackjackSimulation {
         for (const p of this.players) {
           let mode = p.profile?.play || this.rules.play.mode,
             t = this.shoe.length ? (this.count * 52) / this.shoe.length : 0;
-          if (
-            !p.satOut &&
-            mode === "deviations" &&
-            t * (p.profile?.accuracy ?? 1) >= this.rules.play.insuranceIndex
-          ) {
+          let insure = mode === "deviations" && t * (p.profile?.accuracy ?? 1) >= this.rules.play.insuranceIndex;
+          if (!p.satOut && p.seat === interactiveSeat) {
+            const cost = Math.floor(p.hands[0].bet / 2);
+            insure = yield { kind: "insurance", seat: p.seat, cost,
+              affordable: !this.config.finite || p.balance >= cost, snapshot: this.snap(null), events: [...events] };
+          }
+          if (!p.satOut && insure) {
             let amount = Math.floor(p.hands[0].bet / 2);
             if (!this.config.finite || p.balance >= amount) {
               p.balance -= amount;
               p.insurance = amount;
+              p.roundInsurance = amount;
               insuranceWager += amount;
             }
           }
@@ -497,7 +553,18 @@ class BlackjackSimulation {
                   h.cards.length === 2 &&
                   !h.split,
               };
-              let action = this.decide(p, h, dealer[0], legal, peeked);
+              let action;
+              if (p.seat === interactiveSeat) {
+                const actions = ["hit", "stand", ...(legal.canDouble ? ["double"] : []),
+                  ...(legal.canSplit ? ["split"] : []), ...(legal.canSurrender ? ["surrender"] : [])];
+                action = yield { kind: "decision", seat: p.seat, handIndex: index, legal: { ...legal }, actions,
+                  hand: JSON.parse(JSON.stringify(h)), up: { ...dealer[0] }, peeked,
+                  count: this.count, trueCount: this.shoe.length ? this.count * 52 / this.shoe.length : 0,
+                  snapshot: this.snap(null), events: [...events] };
+                if (!actions.includes(action)) throw Error("That action is not legal for this hand.");
+                p.decision = "Your decision: " + action;
+              } else action = this.decide(p, h, dealer[0], legal, peeked);
+              p.roundActions[action] = (p.roundActions[action] || 0) + 1;
               if (action === "surrender") {
                 h.surrender = true;
                 h.status = "Surrender";
@@ -547,7 +614,7 @@ class BlackjackSimulation {
         dealerBlackjack = natural({ cards: dealer, split: false });
       }
       this.holeHidden = false;
-      let revealDelta = hiLo(dealer[1]);
+      let revealDelta = countValue(dealer[1], this.config.countSystem);
       this.observe(dealer[1]);
       snap({ seat: "dealer", hand: 0, card: 1, delta: revealDelta });
       let needsDealer =
@@ -663,7 +730,13 @@ class BlackjackSimulation {
         this.sessionRounds === this.config.rounds
       )
         this.path.push({ x: this.sessionRounds, y: sessionProfit });
-      this.lastResult = { profit, wager: roundWager, dealerBust };
+      this.lastResult = { profit, wager: roundWager, dealerBust, openingCount, openingPenetration,
+        seats: this.players.map((p, i) => ({ seat: p.seat, profit: p.balance - startBalances[i],
+          wager: p.hands.reduce((s, h) => s + h.bet, 0) + p.roundInsurance,
+          openingWager: p.hands.reduce((s, h) => s + (h.openingBet || 0), 0),
+          actions: { ...p.roundActions }, hands: p.hands.map(h => ({ status: h.status,
+            blackjack: natural(h), bet: h.bet, total: handValue(h.cards).total })) })) };
+      this.roundStartBalances = null;
       snap(null);
       this.pendingSessionEnd =
         this.sessionRounds >= this.config.rounds || this.shouldTerminate();
@@ -678,6 +751,7 @@ class BlackjackSimulation {
         p.hands = [];
         p.thought = "";
       });
+      this.roundStartBalances = null;
       if (e.message !== "Shoe exhausted") throw e;
       this.stats.exhaustedShoes++;
       this.openShoe();
@@ -708,7 +782,7 @@ class BlackjackSimulation {
     this.beginSession();
   }
   observe(card) {
-    this.count += hiLo(card);
+    this.count += countValue(card, this.config.countSystem);
     this.unseen[
       Math.min(10, rankValue(card.rank) === 11 ? 1 : rankValue(card.rank)) - 1
     ]--;
@@ -726,7 +800,7 @@ class BlackjackSimulation {
         return this.players.some(low);
       case "you":
         return (
-          this.players.some((p) => p.seat === 2 && low(p)) ||
+          this.players.some((p) => p.seat === (this.config.heroSeat ?? 2) && low(p)) ||
           this.players.every(low)
         );
       case "stoploss":
@@ -962,11 +1036,11 @@ class BlackjackSimulation {
     };
   }
 }
-if (typeof module !== "undefined")
-  module.exports = {
+const BlackjackEngine = {
     BlackjackSimulation,
     seeded,
     hiLo,
+    countValue,
     rankValue,
     handValue,
     natural,
@@ -975,3 +1049,5 @@ if (typeof module !== "undefined")
     legalAction,
     sampleCutTarget,
   };
+if (typeof module !== "undefined") module.exports = BlackjackEngine;
+else globalThis.BJEngine = BlackjackEngine;

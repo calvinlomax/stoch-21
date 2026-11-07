@@ -4,4 +4,4 @@ playwright-report/
 .DS_Store
 
 # Local-only ML code, environments, datasets, checkpoints, logs, and reports.
-/ML/
+/ML/*

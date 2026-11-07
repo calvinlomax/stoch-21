@@ -4,7 +4,7 @@
   "description": "Finite-shoe blackjack simulator with configurable strategies and opponent profiles",
   "main": "engine.js",
   "scripts": {
-    "test": "node --test tests/engine.test.js",
+    "test": "node --test tests/*.test.js",
     "test:ui": "playwright test",
     "test:all": "npm test && npm run test:ui"
   },

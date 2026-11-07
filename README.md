@@ -1,6 +1,19 @@
 # Blackjack Lab
 
-A static, finite-shoe blackjack simulator. Open `index.html` directly, or serve this directory with `python3 -m http.server 8765`.
+A static, finite-shoe blackjack application with **Play | Learn | Laboratory | Simulator** workspaces. Open `index.html` directly, or serve this directory with `python3 -m http.server 8765`. Serving over HTTP enables Laboratory Web Workers; direct-file browsing falls back to cooperative tasks.
+
+## Workspaces
+
+- **Play:** real manual wagers, insurance, and legal hit/stand/double/split/surrender decisions. Optional selected-strategy automation, hints, count visibility/entry, session statistics, bankroll history and review. It does not grade the player as an exercise.
+- **Learn:** guided real hands with configurable assistance and immediate/decision/hand/round/session-end feedback; focused seeded drills cover Hi-Lo values and running counts, true-count conversion, deck estimation, hard/soft/pair/surrender decisions, I18/Fab 4 and bet sizing. Answer reviews, response times, streaks, scores and concept progress are retained.
+- **Laboratory:** a frozen strategy and an explicit, previewable randomized design run through synchronized worker shards. Every run has its own live profit, equity, drawdown, ROI, wager and count path. Average, linear regression, penalized cubic-spline GAM and SMA overlays are descriptive fits. Filters, all-run replay, exact seeded table replay, distributions, parameter associations, comparison arms, CSV/JSON export and worker checkpoints support review.
+- **Simulator:** the original controlled setup, full Standard/Advanced overhaul, animation controls, statistics and exports remain available.
+
+Each mode retains separate settings and presets. Play and guided hands restore through a deterministic decision log; Simulator stores its engine/RNG state; larger Laboratory paths and synchronized checkpoints use IndexedDB. Configurations and realized Laboratory environments can move between modes without copying active deals. Global reset clears this app's settings, presets, sessions, learning progress and stored Laboratory results.
+
+All modes use the same finite-shoe engine, dealer/legal-action rules, wager constraints, counting and opponent systems. Public snapshots redact the dealer hole card; hints and EV overlays do not advance actual RNG streams. Laboratory estimates describe the selected player, rather than combined opponent profits. Intervals use environment clusters, merge shared-seed clusters, and apply Student-t ratio-estimator intervals; fewer than two independent clusters cannot support an interval. Ruin-frequency intervals retain nonzero uncertainty after zero observed events. Repeated-session noise is accounted for in the approximate between-environment sensitivity classification; insufficient replication remains unclassified. Positive bootstrap frequency is resampling stability, not a posterior probability of a positive edge. Live results are provisional. Approximately neutral requires an interval inside a declared equivalence band, rather than an imprecise interval that merely crosses zero.
+
+All explanations use the app's native MathML renderer with LaTeX annotations; no network math dependency is required. Long paths retain all raw points while canvas display and fit overlays use a bounded sample grid; every run remains represented. The SMA window counts plotted samples. Storage can be unavailable or quota-limited; the UI reports failures and completed results can be exported. Laboratory rebuys preserve accumulated losses in total equity, and unlimited-bankroll minimum crossings are labeled rather than treated as forced termination.
 
 The compact **Rules & strategy** controls and the seven-section **Advanced** dialog share one configuration. Advanced edits are drafts until **Apply**; **Cancel** and Escape discard them. Changes affect the next run. Animation speed remains adjustable during a run.
 
@@ -25,6 +38,9 @@ Settings persist in browser storage when available. Built-in presets, a saved pr
 - `engine.js`: standalone simulation engine, legal decisions, accounting, and composition-aware EV rollouts; usable from Node without a DOM.
 - `settings.js`: shared Standard/Advanced state, transactional dialog, previews, help, analytics, and persistence.
 - `script.js`: existing artwork, table rendering, playback, summaries, charts, and CSV export.
+- `modes-core.js`: mode storage, shared interactive sessions, per-player accounting, reproducible drills and learning scores.
+- `laboratory-core.js` / `lab-worker.js`: validated randomized designs, synchronized engine shards, checkpoints, cluster inference and fitted overlays.
+- `modes.js`, `learning-ui.js`, `laboratory-ui.js`, `modes.css`: navigation, isolated workflows, help, transfers, live charts and reviews.
 
 ## Tests
 

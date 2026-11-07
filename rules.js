@@ -128,6 +128,7 @@ const BJRules = (() => {
     },
     play: {
       mode: "basic",
+      decisionRules: [],
       table: {},
       deviations: clone(deviations),
       insuranceIndex: 3,
@@ -451,6 +452,14 @@ const BJRules = (() => {
     finite(r.dealer.maxHands, "Maximum hands", 1, 8, true);
     finite(r.play.evSamples, "EV samples", 32, 2048, true);
     finite(r.play.insuranceIndex, "Insurance index", -20, 20);
+    if (!Array.isArray(r.play.decisionRules) || r.play.decisionRules.length > 100) throw Error('Use at most 100 custom decision rules.');
+    for (const row of r.play.decisionRules) {
+      choice(row.type, ['any', 'hard', 'soft', 'pair'], 'Decision rule hand type');
+      choice(row.action, ACTIONS, 'Decision rule action');
+      for (const key of ['minTotal', 'maxTotal']) finite(row[key], key, 2, 31);
+      for (const key of ['minTC', 'maxTC']) finite(row[key], key, -100, 100);
+      if (row.minTotal > row.maxTotal || row.minTC > row.maxTC || !Array.isArray(row.upcards) || !row.upcards.length || row.upcards.some(v => !Number.isInteger(v) || v < 2 || v > 11)) throw Error('Invalid custom decision-rule ranges or upcards.');
+    }
     finite(r.analytics.precision, "Precision", 0, 6, true);
     for (const k of ["chip", "increment"])
       if (Math.abs(r.limits[k] * 100 - Math.round(r.limits[k] * 100)) > 1e-6)
@@ -697,8 +706,8 @@ const BJRules = (() => {
     if (ceiling < floor) return 0;
     return Math.min(ceiling, Math.max(floor, cents));
   }
-  function profile(r, seat, rng) {
-    if (seat === 2 || !r.opponents.enabled) return null;
+  function profile(r, seat, rng, heroSeat = 2) {
+    if (seat === heroSeat || !r.opponents.enabled) return null;
     let o = r.opponents,
       p = {
         name: "Opponent",
