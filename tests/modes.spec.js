@@ -71,7 +71,7 @@ test('Laboratory pauses, checkpoints all shards and resumes to completion', asyn
   await page.getByRole('button', { name: 'Preview actual design', exact: true }).click(); await page.getByRole('button', { name: 'Run experiment', exact: true }).click();
   await page.getByRole('button', { name: 'Pause experiment', exact: true }).click(); await expect(page.locator('.lab-completion')).toContainText('paused');
   await expect.poll(() => page.evaluate(() => new Promise(resolve => { const r = indexedDB.open('blackjack-laboratory-v1', 1); r.onsuccess = () => { const q = r.result.transaction('runs').objectStore('runs').get('latest'); q.onsuccess = () => resolve(q.result?.checkpoints?.length || 0); }; }))).toBe(3);
-  await page.getByRole('button', { name: 'Resume experiment', exact: true }).click(); await expect(page.locator('.lab-completion')).toContainText('3/3 runs complete', { timeout: 30000 }); expect(errors).toEqual([]);
+  await page.locator('[data-lab-step="2"]').click(); await expect(page.getByRole('button', { name: 'Resume experiment', exact: true })).toBeEnabled(); await page.getByRole('button', { name: 'Resume experiment', exact: true }).click(); await page.getByRole('button', { name: 'Results & live metrics' }).click(); await expect(page.locator('.lab-completion')).toContainText('3/3 runs complete', { timeout: 30000 }); expect(errors).toEqual([]);
 });
 test('global reset clears separate mode state and does not save it again during unload', async ({ page }) => {
   await mode(page, 'Play'); await page.getByRole('button', { name: 'New session', exact: true }).click(); await page.locator('#play-decks').fill('2'); await page.locator('#play-starting').click(); await page.locator('.mode-settings').getByRole('button', { name: 'Close', exact: true }).click(); await page.getByRole('button', { name: 'Presets & transfer' }).click();
@@ -172,4 +172,58 @@ test('desktop workspaces fit common window sizes and initialize simulator charts
   await mode(page, 'Laboratory'); await expect(page.getByRole('button', { name: '1. Setup' })).toBeVisible(); await expect(page.locator('[data-lab-step="3"]')).toHaveCount(0);
   await page.getByRole('button', { name: 'Compare multiple', exact: true }).click(); await expect(page.getByRole('button', { name: '1. Strategy' })).toBeVisible(); await expect(page.getByRole('button', { name: '4. Results' })).toBeVisible();
   await page.setViewportSize({ width: 1024, height: 900 }); await page.screenshot({ path: '/private/tmp/stoch21-lab-desktop.png' });
+});
+test('Laboratory table settings offer simulator penetration modes and environment sections stay open', async ({ page }) => {
+  await mode(page, 'Laboratory'); await page.getByRole('button', { name: 'Compare multiple', exact: true }).click();
+  await page.getByRole('button', { name: 'Table Settings' }).click();
+  const modeSelect = page.locator('#adv-penetrationMode'); await expect(modeSelect.locator('option')).toHaveText(['Fixed', 'Simulated', 'Gaussian']);
+  await expect(page.locator('#adv-penetration')).toBeVisible(); await expect(page.locator('#adv-penetrationSigma')).toBeHidden();
+  await modeSelect.selectOption('simulated'); await expect(page.locator('#adv-penetration')).toBeHidden(); await expect(page.locator('#adv-penetrationSigma')).toBeHidden();
+  await modeSelect.selectOption('gaussian'); await expect(page.locator('#adv-penetrationSigma')).toBeVisible(); await page.locator('#adv-penetrationSigma').fill('4.5'); await page.locator('#advancedApply').click();
+  const fields = await page.evaluate(() => BJWorkspace.store.mode('laboratory').envelope.fields); expect(fields.penetrationMode).toBe('gaussian'); expect(+fields.penetrationSigma).toBe(4.5);
+  await page.locator('[data-lab-step="1"]').click(); const more = page.locator('details').filter({ has: page.locator('summary').filter({ hasText: 'More rule, limit, count and opponent conditions' }) }); await more.locator('summary').click();
+  await more.getByLabel('Hole card distribution').selectOption('choice'); await expect(more).toHaveAttribute('open', ''); await expect(more.getByLabel('Hole card allowed values')).toBeVisible();
+  await more.getByLabel('Double after split distribution').selectOption('choice'); await expect(more).toHaveAttribute('open', '');
+  await page.getByRole('button', { name: 'Preview design →' }).click(); await expect(page.getByRole('heading', { name: 'Resulting experiment design' })).toBeVisible();
+  const download = page.waitForEvent('download'); await page.getByRole('button', { name: 'Export frozen design' }).click(); expect((await download).suggestedFilename()).toBe('blackjack-laboratory-design.json');
+});
+test('Laboratory strategy changes and Clear Results preserve or export results on request', async ({ page }) => {
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  await mode(page, 'Laboratory'); await page.getByRole('button', { name: 'Compare multiple', exact: true }).click(); await page.locator('[data-lab-step="2"]').click();
+  for (const [id, value] of [['environments', 2], ['sessions', 1], ['hands', 20], ['workers', 2]]) await page.locator('#lab-' + id).fill(String(value));
+  const bankruptcy = await page.getByLabel('Bankruptcy behavior', { exact: true }).boundingBox(), run = await page.getByRole('button', { name: 'Run experiment', exact: true }).boundingBox(); expect(bankruptcy.y + bankruptcy.height).toBeLessThanOrEqual(run.y);
+  await page.getByRole('button', { name: 'Run experiment', exact: true }).click(); await expect(page.locator('.lab-completion')).toContainText('4/4 runs complete', { timeout: 30000 });
+  await page.locator('[data-lab-step="0"]').click(); await page.locator('.lab-strategy-row').first().getByRole('button', { name: 'Edit strategy' }).click(); await page.locator('#adv-play-mode').selectOption('stand'); await page.locator('#advancedApply').click();
+  await page.getByRole('dialog', { name: 'Clear experiment?' }).getByRole('button', { name: 'Cancel' }).click(); await expect(page.locator('#advancedDialog')).toBeVisible();
+  await page.locator('#advancedApply').click(); await page.getByRole('dialog', { name: 'Clear experiment?' }).getByRole('button', { name: 'Clear experiment' }).click(); await page.getByRole('dialog', { name: 'Save or export first?' }).getByRole('button', { name: 'Cancel' }).click(); await expect(page.locator('#advancedDialog')).toBeVisible();
+  const old = await page.evaluate(() => BJWorkspace.store.mode('laboratory').labSettings.strategies[0].envelope.rules.play.mode); expect(old).not.toBe('stand');
+  await page.locator('#advancedApply').click(); await page.getByRole('dialog', { name: 'Clear experiment?' }).getByRole('button', { name: 'Clear experiment' }).click();
+  const downloadPromise = page.waitForEvent('download'); await page.getByRole('dialog', { name: 'Save or export first?' }).getByRole('button', { name: 'Export JSON' }).click(); const download = await downloadPromise;
+  const saved = JSON.parse(await require('node:fs/promises').readFile(await download.path(), 'utf8')); expect(saved.jobs).toHaveLength(4);
+  await page.getByRole('dialog', { name: 'Save or export first?' }).getByRole('button', { name: 'Clear experiment' }).click(); await expect(page.locator('#advancedDialog')).toBeHidden();
+  expect(await page.evaluate(() => BJWorkspace.store.mode('laboratory').labSettings.strategies[0].envelope.rules.play.mode)).toBe('stand');
+  await page.reload(); await expect(page.getByRole('button', { name: '1. Strategy' })).toBeVisible();
+  await page.locator('[data-lab-step="2"]').click(); await page.getByRole('button', { name: 'Run experiment', exact: true }).click(); await expect(page.locator('.lab-completion')).toContainText('4/4 runs complete', { timeout: 30000 });
+  const clear = page.getByRole('button', { name: 'Clear Results' }), clearBox = await clear.boundingBox(), exportBox = await page.getByRole('button', { name: 'Export CSV', exact: true }).boundingBox(); expect(clearBox.y).toBe(exportBox.y); expect(clearBox.x).toBeGreaterThan(exportBox.x);
+  await clear.click(); await page.getByRole('dialog', { name: 'Clear experiment?' }).getByRole('button', { name: 'Clear experiment' }).click(); await page.getByRole('dialog', { name: 'Save or export first?' }).getByRole('button', { name: 'Clear experiment' }).click();
+  await expect(page.getByRole('button', { name: 'Run experiment', exact: true })).toBeVisible(); await page.reload(); await expect(page.locator('.lab-completion')).toHaveCount(0); expect(errors).toEqual([]);
+});
+test('single-strategy setup changes can be canceled without losing the experiment', async ({ page }) => {
+  await mode(page, 'Laboratory'); await page.locator('[data-lab-step="2"]').click();
+  for (const [id, value] of [['environments', 1], ['sessions', 1], ['hands', 10], ['workers', 1]]) await page.locator('#lab-' + id).fill(String(value));
+  await page.getByRole('button', { name: 'Run experiment', exact: true }).click(); await expect(page.locator('.lab-completion')).toContainText('1/1 runs complete', { timeout: 30000 });
+  await page.locator('[data-lab-step="0"]').click(); await page.getByRole('button', { name: 'Strategy & table settings' }).click();
+  const decks = page.locator('#laboratory-decks'); await decks.fill('2'); await decks.press('Tab');
+  await page.getByRole('dialog', { name: 'Clear experiment?' }).getByRole('button', { name: 'Cancel' }).click(); await expect(decks).toHaveValue('6');
+  await decks.fill('2'); await decks.press('Tab'); await page.getByRole('dialog', { name: 'Clear experiment?' }).getByRole('button', { name: 'Clear experiment' }).click(); await page.getByRole('dialog', { name: 'Save or export first?' }).getByRole('button', { name: 'Clear experiment' }).click();
+  await expect.poll(() => page.evaluate(() => BJWorkspace.store.mode('laboratory').envelope.fields.decks)).toBe('2'); await page.locator('.mode-settings').getByRole('button', { name: 'Done' }).click(); await page.reload(); await expect(page.locator('.lab-completion')).toHaveCount(0);
+});
+test('clearing a running Laboratory experiment cannot restore an old checkpoint', async ({ page }) => {
+  await mode(page, 'Laboratory'); await page.getByRole('button', { name: 'Compare multiple', exact: true }).click(); await page.locator('[data-lab-step="2"]').click();
+  for (const [id, value] of [['environments', 2], ['sessions', 1], ['hands', 10000], ['workers', 2], ['tickHands', 1]]) await page.locator('#lab-' + id).fill(String(value));
+  await page.getByRole('button', { name: 'Run experiment', exact: true }).click(); await expect(page.locator('.lab-completion')).toContainText('running');
+  await page.getByRole('button', { name: 'Clear Results' }).click(); await page.getByRole('dialog', { name: 'Clear experiment?' }).getByRole('button', { name: 'Clear experiment' }).click(); await page.getByRole('dialog', { name: 'Save or export first?' }).getByRole('button', { name: 'Clear experiment' }).click();
+  await expect(page.getByRole('button', { name: 'Run experiment', exact: true })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => new Promise(resolve => { const r = indexedDB.open('blackjack-laboratory-v1', 1); r.onsuccess = () => { const q = r.result.transaction('runs').objectStore('runs').get('latest'); q.onsuccess = () => resolve(q.result ?? null); }; }))).toBeNull();
+  await page.reload(); await expect(page.locator('.lab-completion')).toHaveCount(0);
 });

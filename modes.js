@@ -311,6 +311,7 @@
   }
   function download(name, data) { const blob = new Blob([typeof data === 'string' ? data : JSON.stringify(data, null, 2)], { type: name.endsWith('.csv') ? 'text/csv' : 'application/json' }); const url = URL.createObjectURL(blob), a = el('a', { href: url, download: name }); a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
   const api = { el, button, field, panel, heading, info, help, math, metric, money, pct, notice, guarded, renderCards, table, chart, bars, store, setup, settingsDialog, persist, configuration, updateEnvelope, transferConfig, download,
+    beforeAdvancedApply: () => current !== 'laboratory' || controllers.laboratory?.stageIndex !== 0 ? true : controllers.laboratory.beforeStrategyChange(),
     summary(text, category = 'statistics') { const s = el('summary', {}, text); s.append(info(text, null, category)); return s; },
     get active() { return current; }, refresh: () => controllers[current]?.refresh?.() };
   window.BJWorkspace = api;

@@ -7,7 +7,7 @@ const RuleSettings = (() => {
   let current = R.defaults(),
     draftSettings = null,
     active = "bet",
-    matrix = "hard", scope = null, draftExtras = {};
+    matrix = "hard", scope = null, draftExtras = {}, openingSettings = null;
   const sections = {
     bet: "Bet sizing",
     play: "Strategy for your seat",
@@ -785,6 +785,7 @@ const RuleSettings = (() => {
     scope = options && !options.target ? options : null;
     draftSettings = scope?.envelope ? copy(scope.envelope) : capture();
     draftExtras = copy(scope?.extras || {});
+    openingSettings = JSON.stringify(draftSettings);
     const pages = scope ? ['general', ...scope.pages] : Object.keys(sections);
     active = scope ? 'general' : (sections[active] ? active : 'bet');
     $('advancedNav').replaceChildren();
@@ -829,10 +830,10 @@ const RuleSettings = (() => {
         for (const row of rows)
           if (!seen.has(row[0]) && !scope?.excludePaths?.includes(row[0])) {
             seen.add(row[0]);
-            box.append(makeField(row));
+            box.append(scope?.penetrationControl && row[0] === 'penetration' ? makePenetrationControl() : makeField(row));
           }
     } else for (const row of (active === 'general' ? scope.generalRows : schema[active])) {
-      if (!scope?.excludePaths?.includes(row[0])) box.append(makeField(row));
+      if (!scope?.excludePaths?.includes(row[0])) box.append(scope?.penetrationControl && row[0] === 'penetration' ? makePenetrationControl() : makeField(row));
     }
     $("advancedExtra").replaceChildren();
     if (active === "bet") {
@@ -845,6 +846,18 @@ const RuleSettings = (() => {
     filter();
     validateDraft(false);
     preview();
+  }
+  function makePenetrationControl() {
+    const wrap = el('div', { class: 'field advanced-field', 'data-search': 'penetration fixed simulated gaussian cut sigma' }), label = el('div', { class: 'field-label' });
+    label.append(el('label', { for: 'adv-penetrationMode' }, 'Penetration %'), info('penetration', 'Penetration %')); wrap.append(label);
+    const group = el('div', { class: 'penetration-control' }), fixed = el('input', { type: 'number', id: 'adv-penetration', min: 20, max: 95, step: .0001, 'aria-label': 'Fixed cut-card percentage' }), sigma = el('input', { type: 'number', id: 'adv-penetrationSigma', min: 0, max: 30, step: .1, 'aria-label': 'Standard deviation in percentage points' }), mode = el('select', { id: 'adv-penetrationMode', 'aria-label': 'Penetration mode' }), hint = el('small');
+    for (const [value, text] of [['fixed', 'Fixed'], ['simulated', 'Simulated'], ['gaussian', 'Gaussian']]) mode.append(el('option', { value }, text));
+    fixed.value = draftSettings.fields.penetration; sigma.value = draftSettings.fields.penetrationSigma; mode.value = draftSettings.fields.penetrationMode;
+    const update = () => { group.classList.toggle('numeric', mode.value !== 'simulated'); fixed.hidden = mode.value !== 'fixed'; sigma.hidden = mode.value !== 'gaussian'; hint.textContent = { fixed: 'Fixed cut target (%)', simulated: 'Variable cut + actual rounds', gaussian: 'Gaussian σ (pp)' }[mode.value]; };
+    fixed.oninput = () => { draftSettings.fields.penetration = fixed.value.trim() === '' ? NaN : Number(fixed.value); validateDraft(false); preview(); };
+    sigma.oninput = () => { draftSettings.fields.penetrationSigma = sigma.value.trim() === '' ? NaN : Number(sigma.value); validateDraft(false); preview(); };
+    mode.onchange = () => { draftSettings.fields.penetrationMode = mode.value; update(); validateDraft(false); preview(); };
+    group.append(fixed, sigma, mode); wrap.append(group, hint); update(); return wrap;
   }
   function kellyPresets() {
     if (!["fractional", "ev"].includes(get("bet.mode"))) return;
@@ -1969,12 +1982,18 @@ const RuleSettings = (() => {
     }
     $("advancedOpen").onclick = open;
     $("advancedCancel").onclick = () => $("advancedDialog").close();
-    $("advancedApply").onclick = () => {
-      if (validateDraft()) {
-        if (scope?.onApply) scope.onApply(copy(draftSettings), copy(draftExtras));
-        else applyEnvelope(draftSettings);
-        $("advancedDialog").close();
-      }
+    $("advancedApply").onclick = async () => {
+      if (!validateDraft()) return;
+      const apply = $('advancedApply'); apply.disabled = true;
+      try {
+        if (scope?.onApply) { if (await scope.onApply(copy(draftSettings), copy(draftExtras)) === false) return; }
+        else {
+          if (openingSettings !== JSON.stringify(draftSettings) && window.BJWorkspace?.beforeAdvancedApply && !await window.BJWorkspace.beforeAdvancedApply()) return;
+          applyEnvelope(draftSettings);
+        }
+        $('advancedDialog').close();
+      } catch (error) { $('advancedError').textContent = error.message; }
+      finally { if ($('advancedDialog').open) apply.disabled = false; }
     };
     $("advancedResetSection").onclick = () => {
       draftSettings.rules[active] = R.defaults()[active];

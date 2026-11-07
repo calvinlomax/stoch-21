@@ -5,7 +5,7 @@ const BJLaboratoryUI = (() => {
     return new class {
       constructor() {
         this.loaded = false; this.loading = false; this.state = null; this.workers = []; this.shards = []; this.running = false;
-        this.stageIndex = 0; this.tick = 0; this.cursor = null; this.filter = ''; this.parameter = 'decks'; this.replayTimer = null; this.workerKind = 'Not started'; this.pendingUpdates = []; this.pendingStates = []; this.awaiting = 0; this.generation = 0; this.analysisId = 0;
+        this.stageIndex = 0; this.tick = 0; this.cursor = null; this.filter = ''; this.parameter = 'decks'; this.replayTimer = null; this.workerKind = 'Not started'; this.pendingUpdates = []; this.pendingStates = []; this.awaiting = 0; this.generation = 0; this.analysisId = 0; this.pendingPersists = new Set();
       }
       get mode() { return api.store.mode('laboratory'); }
       get settings() { return this.mode.labSettings ||= L.defaults(); }
@@ -37,13 +37,16 @@ const BJLaboratoryUI = (() => {
           ['$speed', 'Game speed', { 1: '1×', 2: '2×', 5: '5×', 10: '10×', 25: '25×' }],
           ['seed', 'Random seed', 'number', 0, 4294967295, 1], ['$countVisibility', 'Count display', { hidden: 'Hidden', running: 'Running count', true: 'True count', both: 'Running & true' }],
         ];
-        RuleSettings.open({ title: strategy ? `${strategy.name} settings` : 'Table settings', envelope: e, generalRows: rows,
+        const extras = { countSystem: e.fields.countSystem || 'hiLo', opponents: e.seats.filter(p => p.active && p.seat !== +e.fields.heroSeat).length, heroSeat: String(e.fields.heroSeat), speed: String(o.speed), countVisibility: o.countVisibility }, initial = JSON.stringify([e, extras]);
+        RuleSettings.open({ title: strategy ? `${strategy.name} settings` : 'Table settings', envelope: e, generalRows: rows, penetrationControl: !strategy,
           pages: strategy ? ['play', 'bet', 'limits', 'analytics'] : ['dealer', 'payout', 'opponents', 'analytics'], pageNames: strategy ? {} : { analytics: 'Display & analytics' }, decisionRules: !!strategy,
           excludePaths: strategy ? ['minBet', 'limits.tableMax', 'analytics.mode'] : ['analytics.precision', 'analytics.round', 'bet.edgeModel', 'bet.edgeBase', 'bet.edgeSlope', 'bet.edgeExpression', 'bet.variance'],
-          extras: { countSystem: e.fields.countSystem || 'hiLo', opponents: e.seats.filter(p => p.active && p.seat !== +e.fields.heroSeat).length, heroSeat: String(e.fields.heroSeat), speed: String(o.speed), countVisibility: o.countVisibility },
-          onApply: (draft, extra) => {
+          extras,
+          onApply: async (draft, extra) => {
+            if (!Number.isInteger(+extra.opponents) || +extra.opponents < 0 || +extra.opponents > 4) throw Error('Number of opponents must be between 0 and 4.');
+            if (JSON.stringify([draft, extra]) !== initial && !await this.beforeStrategyChange()) return false;
             if (strategy) { draft.fields.countSystem = extra.countSystem; strategy.envelope = draft; }
-            else { o.speed = +extra.speed; o.countVisibility = extra.countVisibility; api.updateEnvelope(target => { for (const key of ['decks', 'penetration', 'minBet', 'seed']) target.fields[key] = draft.fields[key]; const changedSeats = +target.fields.heroSeat !== +extra.heroSeat || target.seats.filter(p => p.active && p.seat !== +target.fields.heroSeat).length !== +extra.opponents; target.fields.heroSeat = extra.heroSeat; if (changedSeats) target.seats = M.seats(+extra.opponents, '', +extra.heroSeat); for (const key of ['dealer', 'payout', 'opponents', 'analytics']) target.rules[key] = M.clone(draft.rules[key]); target.rules.limits.tableMax = draft.rules.limits.tableMax; }); }
+            else { o.speed = +extra.speed; o.countVisibility = extra.countVisibility; api.updateEnvelope(target => { for (const key of ['decks', 'penetration', 'penetrationMode', 'penetrationSigma', 'minBet', 'seed']) target.fields[key] = draft.fields[key]; const changedSeats = +target.fields.heroSeat !== +extra.heroSeat || target.seats.filter(p => p.active && p.seat !== +target.fields.heroSeat).length !== +extra.opponents; target.fields.heroSeat = extra.heroSeat; if (changedSeats) target.seats = M.seats(+extra.opponents, '', +extra.heroSeat); for (const key of ['dealer', 'payout', 'opponents', 'analytics']) target.rules[key] = M.clone(draft.rules[key]); target.rules.limits.tableMax = draft.rules.limits.tableMax; }); }
             api.persist();
           } });
       }
@@ -57,7 +60,16 @@ const BJLaboratoryUI = (() => {
         if (this.db) return this.db;
         this.db = await new Promise((resolve, reject) => { const r = indexedDB.open('blackjack-laboratory-v1', 1); r.onupgradeneeded = () => r.result.createObjectStore('runs'); r.onsuccess = () => resolve(r.result); r.onerror = () => reject(r.error); }); return this.db;
       }
-      async clearSaved() { try { const db = await this.database(); await new Promise((resolve, reject) => { const tx = db.transaction('runs', 'readwrite'); tx.objectStore('runs').clear(); tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); }); } catch {} this.state = null; }
+      async clearSaved() {
+        this.clearing = true; this.stop();
+        if (this.state?.status === 'running') this.state.status = 'paused';
+        try {
+          await Promise.allSettled([...this.pendingPersists]);
+          if ('indexedDB' in window) { const db = await this.database(); await new Promise((resolve, reject) => { const tx = db.transaction('runs', 'readwrite'); tx.objectStore('runs').delete('latest'); tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error || Error('Could not clear saved experiment.')); }); }
+          try { localStorage.removeItem('blackjack.lab.backup'); } catch {}
+          this.state = null; this.finalSummary = null; this.tick = 0; this.cursor = null; this.filter = ''; this.drillStrategy = ''; this.drillEnvironment = this.drillSession = null;
+        } finally { this.clearing = false; }
+      }
       async load() {
         if (this.loading || this.loaded) return; this.loading = true;
         try { const db = await this.database(); const saved = await new Promise((resolve, reject) => { const r = db.transaction('runs').objectStore('runs').get('latest'); r.onsuccess = () => resolve(r.result); r.onerror = () => reject(r.error); });
@@ -65,17 +77,48 @@ const BJLaboratoryUI = (() => {
         } catch { try { this.state = JSON.parse(localStorage.getItem('blackjack.lab.backup')); if (this.state) { this.state.status = 'paused'; this.stageIndex = 3; } } catch {} }
         this.loaded = true; this.loading = false; if (api.active === 'laboratory') this.mount(document.getElementById('modeWorkspace'));
       }
-      async persist() {
-        if (!this.state) return;
-        this.state.tick = this.tick;
-        try { const db = await this.database(); await new Promise((resolve, reject) => { const tx = db.transaction('runs', 'readwrite'); tx.objectStore('runs').put(this.state, 'latest'); tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); }); }
-        catch { try { localStorage.setItem('blackjack.lab.backup', JSON.stringify(this.state)); } catch { api.notice('Laboratory results remain in memory; browser storage is unavailable or full. Export results to retain them.', true); } }
+      persist() {
+        if (!this.state || this.clearing) return Promise.resolve();
+        const state = this.state; state.tick = this.tick;
+        const task = (async () => {
+          try { const db = await this.database(); await new Promise((resolve, reject) => { const tx = db.transaction('runs', 'readwrite'); tx.objectStore('runs').put(state, 'latest'); tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error || Error('Experiment save was aborted.')); }); }
+          catch { try { localStorage.setItem('blackjack.lab.backup', JSON.stringify(state)); } catch { api.notice('Laboratory results remain in memory; browser storage is unavailable or full. Export results to retain them.', true); } }
+        })();
+        this.pendingPersists.add(task); task.finally(() => this.pendingPersists.delete(task)); return task;
+      }
+      clearDialog(title, message, options) {
+        return new Promise(resolve => {
+          const dialog = el('dialog', { class: 'workspace-dialog lab-confirm-dialog', 'aria-label': title }), actions = el('div', { class: 'dialog-actions' }), status = el('p', { class: 'mode-copy', role: 'status' }); let finished = false;
+          const finish = value => { if (finished) return; finished = true; dialog.close(); dialog.remove(); resolve(value); };
+          dialog.append(el('h2', {}, title), el('p', { class: 'mode-copy' }, message));
+          for (const option of options) actions.append(button(option.label, () => { if (option.action) { option.action(); status.textContent = 'Download requested. The experiment remains available until you choose to clear it.'; } else finish(option.value); }, !!option.primary));
+          dialog.append(status, actions); dialog.addEventListener('cancel', event => { event.preventDefault(); finish(false); }); document.body.append(dialog); dialog.showModal();
+        });
+      }
+      async requestClear(reason = 'Clear the current experiment?') {
+        if (!this.state && !this.previewDesign) return true;
+        if (!await this.clearDialog('Clear experiment?', reason, [{ label: 'Cancel', value: false }, { label: 'Clear experiment', value: true, primary: true }])) return false;
+        const exportJSON = () => api.download('blackjack-laboratory-experiment.json', this.state ? { ...this.state, exportedAt: new Date().toISOString() } : { design: this.previewDesign, exportedAt: new Date().toISOString() });
+        const options = [{ label: 'Export JSON', action: exportJSON }];
+        if (this.state) options.push({ label: 'Export CSV', action: () => this.exportCSV() });
+        options.push({ label: 'Cancel', value: false }, { label: 'Clear experiment', value: true, primary: true });
+        if (!await this.clearDialog('Save or export first?', 'Export a copy before clearing, or continue without saving. Exporting leaves this prompt open until you choose to clear or cancel.', options)) return false;
+        await this.clearSaved(); return true;
+      }
+      async beforeStrategyChange() {
+        if (!await this.requestClear('Changing strategy or table settings will clear the current experiment. Continue?')) return false;
+        this.previewDesign = null; this.previewSignature = null; return true;
       }
       mount(root) {
         const reopen = !!this.settingsDialog?.open;
         const shell = el('div', { class: 'workspace-shell workspace-full' }); this.content = el('main', { class: 'mode-content' }); shell.append(this.content); root.replaceChildren(shell);
         const modal = api.settingsDialog('laboratory', shell, 'Strategy and table settings'); this.settingsDialog = modal.dialog;
         api.setup('laboratory', modal.body);
+        for (const input of modal.body.querySelectorAll('input, select')) {
+          const original = input.onchange; if (!original) continue;
+          let prior = input.type === 'checkbox' ? input.checked : input.value;
+          input.onchange = () => api.guarded(async () => { const next = input.type === 'checkbox' ? input.checked : input.value; if (next === prior) return; if (!input.checkValidity()) { input.reportValidity(); return; } if (!await this.beforeStrategyChange()) { if (input.type === 'checkbox') input.checked = prior; else input.value = prior; return; } original.call(input); prior = input.type === 'checkbox' ? input.checked : input.value; });
+        }
         if (!this.loaded) { this.content.append(el('p', { class: 'mode-loader' }, 'Restoring Laboratory results…')); this.load(); return; }
         this.refresh(); if (reopen) modal.dialog.showModal();
       }
@@ -83,7 +126,7 @@ const BJLaboratoryUI = (() => {
         if (!this.content || api.active !== 'laboratory') return;
         this.content.replaceChildren(el('div', { class: 'mode-eyebrow' }, 'LABORATORY · PUT A STRATEGY UNDER PRESSURE'));
         const head = el('div', { class: 'lab-heading-row' }), switcher = el('div', { class: 'segmented-control', role: 'group', 'aria-label': 'Laboratory strategy mode' });
-        for (const [multi, label] of [[false, 'Single strategy'], [true, 'Compare multiple']]) { const choice = button(label, () => { if (this.running) return; this.settings.multiEnabled = multi; if (multi) this.ensureStrategies(); if (this.stageIndex === 3) this.stageIndex = 0; api.persist(); this.refresh(); }); choice.disabled = this.running; choice.setAttribute('aria-pressed', !!this.settings.multiEnabled === multi); switcher.append(choice); }
+        for (const [multi, label] of [[false, 'Single strategy'], [true, 'Compare multiple']]) { const choice = button(label, async () => { if (this.running || !!this.settings.multiEnabled === multi) return; if (!await this.beforeStrategyChange()) return; this.settings.multiEnabled = multi; if (multi) this.ensureStrategies(); if (this.stageIndex === 3) this.stageIndex = 0; api.persist(); this.refresh(); }); choice.disabled = this.running; choice.setAttribute('aria-pressed', !!this.settings.multiEnabled === multi); switcher.append(choice); }
         head.append(heading('h1', 'Build an experiment', 'laboratory'), switcher); this.content.append(head, el('p', { class: 'mode-copy' }, 'Choose a strategy, vary the conditions, then run and explore the results.'));
         const steps = el('div', { class: 'workflow-steps', 'aria-label': 'Laboratory workflow' });
         const labels = this.settings.multiEnabled ? ['Strategy', 'Test Environment', 'Experiment', 'Results'] : ['Setup', 'Test Environment', 'Experiment'];
@@ -99,11 +142,11 @@ const BJLaboratoryUI = (() => {
           const list = el('div', { class: 'lab-strategy-list' });
           for (const [index, strategy] of this.strategies.entries()) {
             const row = el('div', { class: 'lab-strategy-row' }), name = el('input', { value: strategy.name, maxlength: 60, 'aria-label': `Strategy ${index + 1} name` });
-            name.disabled = this.running; name.onchange = () => { strategy.name = name.value.trim() || `Strategy ${index + 1}`; name.value = strategy.name; api.persist(); };
-            row.append(el('span', { class: 'lab-color-dot', style: `background:${this.color(strategy.id)}` }), name, button('Edit strategy', () => this.editSettings(strategy)), button('Remove', () => { this.settings.strategies = this.strategies.filter(s => s.id !== strategy.id); api.persist(); this.refresh(); }));
+            name.disabled = this.running; name.onchange = () => api.guarded(async () => { const next = name.value.trim() || `Strategy ${index + 1}`; if (next !== strategy.name && !await this.beforeStrategyChange()) { name.value = strategy.name; return; } strategy.name = next; name.value = strategy.name; api.persist(); });
+            row.append(el('span', { class: 'lab-color-dot', style: `background:${this.color(strategy.id)}` }), name, button('Edit strategy', () => this.editSettings(strategy)), button('Remove', async () => { if (!await this.beforeStrategyChange()) return; this.settings.strategies = this.strategies.filter(s => s.id !== strategy.id); api.persist(); this.refresh(); }));
             row.lastChild.disabled = this.running || this.strategies.length <= 2; row.querySelectorAll('button')[0].disabled = this.running; list.append(row);
           }
-          const add = button('+ Add strategy', () => { const id = 's' + (Math.max(0, ...this.strategies.map(s => Number(s.id.slice(1)) || 0)) + 1), strategy = { id, name: `Strategy ${this.strategies.length + 1}`, envelope: M.clone(this.mode.envelope) }; this.strategies.push(strategy); api.persist(); this.refresh(); this.editSettings(strategy); });
+          const add = button('+ Add strategy', async () => { if (!await this.beforeStrategyChange()) return; const id = 's' + (Math.max(0, ...this.strategies.map(s => Number(s.id.slice(1)) || 0)) + 1), strategy = { id, name: `Strategy ${this.strategies.length + 1}`, envelope: M.clone(this.mode.envelope) }; this.strategies.push(strategy); api.persist(); this.refresh(); this.editSettings(strategy); });
           add.disabled = this.running || this.strategies.length >= 5;
           section.body.append(list, add, button('Next: test environment →', () => { this.stageIndex = 1; this.refresh(); }, true)); this.content.append(section); return;
         }
@@ -112,7 +155,7 @@ const BJLaboratoryUI = (() => {
         const details = el('details'); details.append(api.summary('Custom decision rules'));
         details.append(el('p', { class: 'mode-copy' }, 'First matching rule wins in Custom or Deviations mode. Each rule declares hand type, total range, dealer upcards (ace = 11), true-count range and action. All actions remain subject to legal-action fallback.'));
         const input = el('textarea', { id: 'lab-decision-rules', class: 'custom-rule-editor', 'aria-label': 'Custom decision rules JSON' }); input.value = JSON.stringify(config.rules.play.decisionRules || [], null, 2);
-        details.append(input, button('Apply custom decision rules', () => { const rows = JSON.parse(input.value); api.updateEnvelope(e => { e.rules.play.decisionRules = rows; e.rules.play.mode = 'custom'; }); api.notice('Custom decision rules saved for the next experiment.'); }), button('Insert example rule', () => { input.value = JSON.stringify([{ type: 'hard', minTotal: 16, maxTotal: 16, upcards: [10], minTC: 0, maxTC: 100, action: 'stand' }], null, 2); }));
+        details.append(input, button('Apply custom decision rules', async () => { const rows = JSON.parse(input.value); const candidate = M.clone(this.mode.envelope); candidate.rules.play.decisionRules = rows; candidate.rules.play.mode = 'custom'; RuleSettings.validateEnvelope(candidate); if (!await this.beforeStrategyChange()) return; api.updateEnvelope(e => { e.rules.play.decisionRules = rows; e.rules.play.mode = 'custom'; }); api.notice('Custom decision rules saved for the next experiment.'); }), button('Insert example rule', () => { input.value = JSON.stringify([{ type: 'hard', minTotal: 16, maxTotal: 16, upcards: [10], minTC: 0, maxTC: 100, action: 'stand' }], null, 2); }));
         section.body.append(details, button('Next: test environment →', () => { this.stageIndex = 1; this.refresh(); }, true)); this.content.append(section);
       }
       color(id) { const colors = ['#67d8ba', '#e6b96a', '#9daafa', '#f28da6', '#82c9f1']; const ids = this.stageIndex === 3 && this.state?.design?.settings?.strategies ? this.state.design.settings.strategies.map(s => s.id) : this.strategies.map(s => s.id); return colors[Math.max(0, ids.indexOf(id)) % colors.length]; }
@@ -131,7 +174,7 @@ const BJLaboratoryUI = (() => {
           const spec = this.settings.parameters[d.key] || { mode: 'fixed' }, row = el('tr'), name = el('td', {}, d.label); name.append(api.info(d.label, `Fixed uses the setup value. Allowed values use relative probabilities; numeric ranges support uniform, truncated normal and positive log-uniform sampling. ${d.values ? 'Allowed options: ' + d.values.join(', ') : `Supported range ${d.min}–${d.max}${d.kind === 'integer' ? ', whole numbers' : ''}`}. Rejection sampling changes the marginal distribution when combinations violate constraints; the realized design is shown before running.`, 'inference'));
           const type = el('select', { 'aria-label': d.label + ' distribution' }); for (const [key, label] of Object.entries({ fixed: 'Fixed', choice: 'Allowed values (weighted)', ...(!d.values ? { uniform: 'Uniform range', normal: 'Truncated normal', logUniform: 'Log-uniform' } : {}) })) type.append(el('option', { value: key }, label)); type.value = spec.mode;
           type.disabled = this.running;
-          type.onchange = () => api.guarded(() => { this.settings.parameters[d.key] = type.value === 'fixed' ? { mode: 'fixed', value: L.get(base, d.key) } : type.value === 'choice' ? { mode: 'choice', values: d.values ? [...d.values] : [L.get(base, d.key)], weights: d.values ? d.values.map(() => 1) : [1] } : { mode: type.value, min: d.min, max: d.max }; api.persist(); this.refresh(); });
+          type.onchange = () => api.guarded(() => { this.settings.parameters[d.key] = type.value === 'fixed' ? { mode: 'fixed', value: L.get(base, d.key) } : type.value === 'choice' ? { mode: 'choice', values: d.values ? [...d.values] : [L.get(base, d.key)], weights: d.values ? d.values.map(() => 1) : [1] } : { mode: type.value, min: d.min, max: d.max }; api.persist(); const replacement = this.parameterTable([d]).querySelector('tbody tr'); row.replaceWith(replacement); replacement.querySelector('select')?.focus(); });
           const modeCell = el('td'); modeCell.append(type); const values = el('td');
           const save = value => { this.settings.parameters[d.key] = value; api.persist(); };
           if (spec.mode === 'fixed') {
@@ -162,8 +205,8 @@ const BJLaboratoryUI = (() => {
         if (!this.settings.multiEnabled && this.settings.compare) {
           grid.append(field('Control playing strategy', 'select', this.settings.controlPlay, value => { this.settings.controlPlay = value; api.persist(); }, { options: BJRules.PLAYS, disabled: this.running, category: 'strategy' }), field('Control betting strategy', 'select', this.settings.controlBet, value => { this.settings.controlBet = value; api.persist(); }, { options: BJRules.BETS, disabled: this.running, category: 'betting' }), field('Paired / common shoe seeds', 'checkbox', this.settings.paired, value => { this.settings.paired = value; api.persist(); }, { disabled: this.running, category: 'inference' }));
         }
-        const controls = el('div', { class: 'mode-controls' }); controls.append(button('Preview actual design', () => { this.preview(); this.refresh(); }), button('Run experiment', () => this.start(), true)); controls.querySelectorAll('button').forEach(b => b.disabled = this.running);
-        if (this.state) controls.append(button(this.running ? 'Pause experiment' : 'Resume experiment', () => this.running ? this.pauseExperiment() : this.resume()), button('Results & live metrics', () => { this.stageIndex = 3; this.refresh(); }));
+        const controls = el('div', { class: 'mode-controls lab-experiment-controls' }); controls.append(button('Preview actual design', () => { this.preview(); this.refresh(); }), button('Run experiment', () => this.start(), true)); controls.querySelectorAll('button').forEach(b => b.disabled = this.running);
+        if (this.state) { const toggle = button(this.running ? 'Pause experiment' : this.state.status === 'complete' ? 'Experiment complete' : 'Resume experiment', () => this.running ? this.pauseExperiment() : this.resume()); toggle.disabled = this.state.status === 'complete' || !this.running && (this.checkpointing || !!this.awaiting); controls.append(toggle, button('Results & live metrics', () => { this.stageIndex = 3; this.refresh(); })); }
         section.body.append(el('p', { class: 'mode-copy' }, 'Set how many environments and hands to test. Preview shows the actual sampled conditions before you run.'), grid, controls);
         if (this.previewDesign) {
           const table = el('table', { class: 'lab-results-table' }), row = el('tr'); ['Environment', 'Decks', 'Cut', 'Dealer', 'Payout', 'Bankroll', 'Table $', 'Opponents', 'Seat', 'Shoe seed'].forEach(t => row.append(el('th', {}, t))); table.append(row);
@@ -172,11 +215,11 @@ const BJLaboratoryUI = (() => {
         }
         this.content.append(section);
       }
-      start() {
+      async start() {
         if (this.running) return;
         const signature = JSON.stringify([api.configuration('laboratory'), this.designSettings()]);
-        if (!this.previewDesign || signature !== this.previewSignature) { this.preview(); this.refresh(); api.notice('Review the realized design, then click Run experiment again.'); return; }
-        if (this.state && !confirm('Start a new experiment? Export the previous results first if you want to keep them.')) return;
+        if (!this.previewDesign || signature !== this.previewSignature) this.preview();
+        if (this.state && !await this.requestClear('Starting a new experiment will clear the current results. Continue?')) return;
         this.stop(); this.state = { version: 1, status: 'running', design: M.clone(this.previewDesign), jobs: this.previewDesign.jobs.map(j => ({ ...M.clone(j), path: [M.ledger(j.config.seats.find(p => p.seat === j.config.heroSeat).amount * 100).path[0]], stats: null, done: false, bins: { count: {}, penetration: {}, bet: {} } })), checkpoints: [], tick: 0 };
         this.tick = 0; this.cursor = null; this.filter = ''; this.drillStrategy = ''; this.drillEnvironment = this.drillSession = null; this.hiddenStrategies = new Set(); this.reference = null; this.stageIndex = 3; this.running = true; this.launch(); this.refresh();
       }
@@ -261,7 +304,7 @@ const BJLaboratoryUI = (() => {
         this.checkpointing = true; let pending = this.workers.length, states = [];
         for (const worker of this.workers) {
           const receive = event => { if (event.data.type !== 'checkpoint') return; worker.removeEventListener('message', receive); states.push(...event.data.states);
-            if (!--pending) { this.state.checkpoints = states; this.state.tick = this.tick; this.checkpointing = false; this.persist(); if (api.active === 'laboratory' && this.stageIndex === 3) this.renderLive(); } };
+            if (!--pending) { this.state.checkpoints = states; this.state.tick = this.tick; this.checkpointing = false; this.persist(); if (api.active === 'laboratory' && this.stageIndex === 3) this.renderLive(); else if (api.active === 'laboratory' && this.stageIndex === 2) this.refresh(); } };
           worker.addEventListener('message', receive); worker.postMessage({ type: 'checkpoint' });
         }
       }
@@ -320,12 +363,16 @@ const BJLaboratoryUI = (() => {
         const confidence = this.state.design.settings.confidence;
         return this.state.design.settings.strategies.map(s => ({ ...s, summary: L.summarize(jobs.filter(j => j.strategyId === s.id), confidence, bootstrap) }));
       }
+      clearResultsButton() {
+        const clear = button('Clear Results', async () => { if (!await this.requestClear('Clear the current Laboratory results?')) return; this.previewDesign = null; this.previewSignature = null; this.stageIndex = 2; this.refresh(); api.notice('Laboratory results cleared.'); });
+        clear.classList.add('lab-clear-results'); return clear;
+      }
       multiResults() {
         const strategies = this.state.design.settings.strategies;
         this.hiddenStrategies ||= new Set(); this.reference ||= strategies[0].id;
         const controls = el('div', { class: 'mode-controls' });
         this.runToggle = button(this.running ? 'Pause experiment' : 'Resume experiment', () => this.running ? this.pauseExperiment() : this.resume());
-        controls.append(this.runToggle, button('Export summary JSON', () => api.download('blackjack-laboratory-summary.json', { design: this.state.design, strategies: this.strategySummaries(this.state.jobs, true), comparisons: strategies.map(s => ({ strategyId: s.id, referenceId: this.reference, difference: this.compareStrategies(this.state.jobs, s.id, this.reference) })), jobs: this.state.jobs.map(({ path, ...job }) => job) })), button('Export all paths JSON', () => api.download('blackjack-laboratory-paths.json', { design: this.state.design, jobs: this.state.jobs })), button('Export CSV', () => this.exportCSV()));
+        controls.append(this.runToggle, button('Export summary JSON', () => api.download('blackjack-laboratory-summary.json', { design: this.state.design, strategies: this.strategySummaries(this.state.jobs, true), comparisons: strategies.map(s => ({ strategyId: s.id, referenceId: this.reference, difference: this.compareStrategies(this.state.jobs, s.id, this.reference) })), jobs: this.state.jobs.map(({ path, ...job }) => job) })), button('Export all paths JSON', () => api.download('blackjack-laboratory-paths.json', { design: this.state.design, jobs: this.state.jobs })), button('Export CSV', () => this.exportCSV()), this.clearResultsButton());
         this.content.append(controls);
         const completion = el('div', { class: 'lab-completion' }); this.progress = el('progress', { max: 1, value: 0 }); this.statusLabel = el('span'); completion.append(this.progress, this.statusLabel); this.content.append(completion);
         const legend = el('div', { class: 'lab-legend', 'aria-label': 'Strategy visibility' });
@@ -422,7 +469,7 @@ const BJLaboratoryUI = (() => {
       results() {
         if (!this.state) { this.content.append(el('p', { class: 'mode-copy' }, 'Preview a design, then run the experiment to generate real results.')); return; }
         if (this.state.design.settings.multiEnabled) { this.multiResults(); return; }
-        const controls = el('div', { class: 'mode-controls' }); this.runToggle = button(this.running ? 'Pause experiment' : 'Resume experiment', () => this.running ? this.pauseExperiment() : this.resume()); controls.append(this.runToggle, button('Export summary JSON', () => api.download('blackjack-laboratory-summary.json', { design: this.state.design, summary: L.summarize(this.state.jobs, this.state.design.settings.confidence, true), jobs: this.state.jobs.map(({ path, ...j }) => j) })), button('Export all paths JSON', () => api.download('blackjack-laboratory-paths.json', { design: this.state.design, jobs: this.state.jobs })), button('Export CSV', () => this.exportCSV())); this.content.append(controls);
+        const controls = el('div', { class: 'mode-controls' }); this.runToggle = button(this.running ? 'Pause experiment' : 'Resume experiment', () => this.running ? this.pauseExperiment() : this.resume()); controls.append(this.runToggle, button('Export summary JSON', () => api.download('blackjack-laboratory-summary.json', { design: this.state.design, summary: L.summarize(this.state.jobs, this.state.design.settings.confidence, true), jobs: this.state.jobs.map(({ path, ...j }) => j) })), button('Export all paths JSON', () => api.download('blackjack-laboratory-paths.json', { design: this.state.design, jobs: this.state.jobs })), button('Export CSV', () => this.exportCSV()), this.clearResultsButton()); this.content.append(controls);
         const completion = el('div', { class: 'lab-completion' }); this.progress = el('progress', { max: 1, value: 0 }); this.statusLabel = el('span'); completion.append(this.progress, this.statusLabel); this.content.append(completion);
         const verdict = panel('Strategy verdict & uncertainty', 'inference'); this.verdictHost = verdict.body; this.content.append(verdict);
         this.metricHost = el('div', { class: 'metrics' }); this.content.append(this.metricHost);
