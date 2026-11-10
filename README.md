@@ -2,6 +2,10 @@
 
 A static, finite-shoe blackjack application with **Play | Learn | Laboratory | Simulator** workspaces. Open `index.html` directly, or serve this directory with `python3 -m http.server 8765`. Serving over HTTP enables Laboratory Web Workers; direct-file browsing falls back to cooperative tasks.
 
+## GitHub Pages
+
+The Pages workflow publishes only the main app and its browser workers. After pushing the workflow to `main`, open the repository's **Settings → Pages**, and under **Build and deployment → Source**, select **GitHub Actions**. The workflow deploys on pushes to `main` and can also be started from the **Actions** tab. The expected project URL is `https://calvinlomax.github.io/stoch-21/`. Local ML experiments and `playermodels/` are not included in the published artifact. If a new runtime asset is added, add it to the file list in `.github/workflows/pages.yml`.
+
 ## Workspaces
 
 - **Play:** real manual wagers, insurance, and legal hit/stand/double/split/surrender decisions. Optional selected-strategy automation, hints, count visibility/entry, session statistics, bankroll history and review. It does not grade the player as an exercise.

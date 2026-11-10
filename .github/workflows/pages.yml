@@ -1,0 +1,41 @@
+name: Deploy main app to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+      - name: Prepare main app
+        run: |
+          mkdir -p _site
+          cp index.html styles.css modes.css \
+            rules.js engine.js script.js sweep-presets.js settings.js \
+            modes-core.js laboratory-core.js learning-ui.js laboratory-ui.js modes.js \
+            lab-worker.js lab-analysis-worker.js _site/
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+      - name: Upload main app
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
