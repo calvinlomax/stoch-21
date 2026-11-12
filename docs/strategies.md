@@ -1,3 +1,5 @@
+# Analysis of Strategy Combinations
+
 Blackjack strategy has two main pieces: how you play a hand and how much you wager on it. The table rules, bankroll, count, and other players provide the conditions in which those choices play out. The app offers **11 named playing strategies and 23 named betting strategies**, or **253 named play-and-bet pairings** before changing any settings. That is a count of menu pairings, not necessarily 253 meaningfully different behaviors: limits and settings can make different pairings act alike. Once you include adjustable parameters, custom tables, decision rules, wager functions, and opponent profiles, there is no single useful fixed total for the possible configurations. Laboratory lets you compare these choices across sampled conditions rather than judging them from one lucky or unlucky session.
 
 **Key:** Regular = Laboratory’s **Strategy & table settings** dialog; Advanced = **All rules & strategy**; Both = available in both. Some advanced fields appear only for the selected strategy or policy.
