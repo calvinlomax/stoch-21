@@ -15,6 +15,23 @@
     { id: 'two-power', name: 'Two-Deck Power Deviations', play: 'deviations', bet: 'power', decks: 2, penetration: 64.1558, dealer: 'S17', seed: 1748240612, sample: .10723, pooled: .036189, environment: 9, session: 1 },
     { id: 'eight-percentile', name: 'Eight-Deck Percentile Basic', play: 'basic', bet: 'percentile', decks: 8, penetration: 80.1605, dealer: 'H17', seed: 2170606468, sample: .15061, pooled: .021392, environment: 10, session: 1 },
   ];
+  // Ranked by pooled ROI over all 20 runs per pair, not by a single lucky run.
+  const topStrategies = [
+    { id: 'deviations-linear', name: 'Sweep #1 · Deviations + Linear', bet: 'linear', roi: .0411860718171926, ci: [-.03710489380802314, .11947703744240834] },
+    { id: 'deviations-count-bankroll', name: 'Sweep #2 · Deviations + Count & Bankroll', bet: 'countBankroll', roi: .039446261382583045, ci: [-.040882984070293074, .11977550683545916] },
+    { id: 'deviations-penetration', name: 'Sweep #3 · Deviations + Penetration', bet: 'penetration', roi: .03701810784980144, ci: [-.0038167747126335375, .07785299041223642] },
+  ];
+  function topDescription(p) {
+    return `Sweep pooled ROI ${(100 * p.roi).toFixed(2)}% (95% interval ${(100 * p.ci[0]).toFixed(2)}% to ${(100 * p.ci[1]).toFixed(2)}%), across 2,000 rounds in 10 environments. The interval includes zero; this is exploratory, not proof of an edge. Dealer, shoe and table maximum remain yours; betting limits, $25 base wager, $10,000 starting bankroll and Hi-Lo use the sweep defaults.`;
+  }
+  function applyTop(envelope, id) {
+    const p = topStrategies.find(item => item.id === id); if (!p) throw Error('Unknown sweep strategy.');
+    const e = JSON.parse(JSON.stringify(envelope)), defaults = BJRules.defaults();
+    e.rules.play = defaults.play; e.rules.bet = defaults.bet; e.rules.bet.mode = p.bet; e.rules.play.mode = 'deviations';
+    e.rules.limits = { ...defaults.limits, tableMax: e.rules.limits.tableMax, terminate: e.rules.limits.terminate };
+    Object.assign(e.fields, { baseBet: '25', starting: '10000', finite: true, countSystem: 'hiLo' });
+    return e;
+  }
   function differences(a, b) { return ['play', 'bet', 'decks', 'penetration', 'dealer'].filter(key => a[key] !== b[key]).length; }
   function description(p) {
     const close = presets.filter(other => other !== p && differences(p, other) === 3).map(other => other.name);
@@ -27,5 +44,5 @@
     Object.assign(e.fields, { decks: String(preset.decks), penetration: String(preset.penetration), penetrationMode: 'fixed', penetrationSigma: '3', minBet: '10', baseBet: '25', starting: '10000', finite: true, heroSeat: '2', countSystem: 'hiLo', seed: String(preset.seed) });
     e.seats = BJModes.seats(2, '', 2); return e;
   }
-  window.BJSweepPresets = { presets, differences, description, apply };
+  window.BJSweepPresets = { presets, differences, description, apply, topStrategies, topDescription, applyTop };
 })();

@@ -137,20 +137,31 @@ const BJLaboratoryUI = (() => {
       }
       strategy() {
         const config = api.configuration('laboratory'), section = panel('Player strategy', 'strategy');
+        const topPreset = (label, apply) => {
+          const select = el('select', { 'aria-label': label }); select.append(el('option', { value: '' }, 'Choose a top sweep strategy…'));
+          for (const p of BJSweepPresets.topStrategies) select.append(el('option', { value: p.id }, p.name));
+          select.disabled = this.running;
+          select.onchange = () => api.guarded(async () => { const preset = BJSweepPresets.topStrategies.find(p => p.id === select.value); if (!preset) return;
+            if (!await this.beforeStrategyChange()) { select.value = ''; return; }
+            apply(preset); api.persist(); this.refresh(); api.notice(BJSweepPresets.topDescription(preset)); });
+          return select;
+        };
         if (this.settings.multiEnabled) {
           section.body.append(el('p', { class: 'mode-copy' }, 'Choose common table conditions, then configure two to five independent strategies.'), button('Table Settings', () => this.editSettings()));
           const list = el('div', { class: 'lab-strategy-list' });
           for (const [index, strategy] of this.strategies.entries()) {
             const row = el('div', { class: 'lab-strategy-row' }), name = el('input', { value: strategy.name, maxlength: 60, 'aria-label': `Strategy ${index + 1} name` });
             name.disabled = this.running; name.onchange = () => api.guarded(async () => { const next = name.value.trim() || `Strategy ${index + 1}`; if (next !== strategy.name && !await this.beforeStrategyChange()) { name.value = strategy.name; return; } strategy.name = next; name.value = strategy.name; api.persist(); });
-            row.append(el('span', { class: 'lab-color-dot', style: `background:${this.color(strategy.id)}` }), name, button('Edit strategy', () => this.editSettings(strategy)), button('Remove', async () => { if (!await this.beforeStrategyChange()) return; this.settings.strategies = this.strategies.filter(s => s.id !== strategy.id); api.persist(); this.refresh(); }));
-            row.lastChild.disabled = this.running || this.strategies.length <= 2; row.querySelectorAll('button')[0].disabled = this.running; list.append(row);
+            const edit = button('Edit strategy', () => this.editSettings(strategy)), remove = button('Remove', async () => { if (!await this.beforeStrategyChange()) return; this.settings.strategies = this.strategies.filter(s => s.id !== strategy.id); api.persist(); this.refresh(); });
+            edit.disabled = this.running; remove.disabled = this.running || this.strategies.length <= 2;
+            row.append(el('span', { class: 'lab-color-dot', style: `background:${this.color(strategy.id)}` }), name, topPreset(`Sweep preset for strategy ${index + 1}`, p => { strategy.envelope = BJSweepPresets.applyTop(strategy.envelope, p.id); strategy.name = p.name; }), edit, remove); list.append(row);
           }
           const add = button('+ Add strategy', async () => { if (!await this.beforeStrategyChange()) return; const id = 's' + (Math.max(0, ...this.strategies.map(s => Number(s.id.slice(1)) || 0)) + 1), strategy = { id, name: `Strategy ${this.strategies.length + 1}`, envelope: M.clone(this.mode.envelope) }; this.strategies.push(strategy); api.persist(); this.refresh(); this.editSettings(strategy); });
           add.disabled = this.running || this.strategies.length >= 5;
           section.body.append(list, add, button('Next: test environment →', () => { this.stageIndex = 1; this.refresh(); }, true)); this.content.append(section); return;
         }
         section.body.append(el('p', {}, `Playing: ${BJRules.PLAYS[config.rules.play.mode]}. Betting: ${BJRules.BETS[config.rules.bet.mode]}. Open settings to change the strategy, table and betting rules.`));
+        section.body.append(topPreset('Top sweep strategy', p => api.updateEnvelope(target => { const e = BJSweepPresets.applyTop(target, p.id); target.fields = e.fields; target.rules = e.rules; })));
         section.body.append(button('Strategy & table settings', () => this.settingsDialog.showModal()));
         const details = el('details'); details.append(api.summary('Custom decision rules'));
         details.append(el('p', { class: 'mode-copy' }, 'First matching rule wins in Custom or Deviations mode. Each rule declares hand type, total range, dealer upcards (ace = 11), true-count range and action. All actions remain subject to legal-action fallback.'));

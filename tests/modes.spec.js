@@ -1,6 +1,32 @@
 const { test, expect } = require('@playwright/test');
 const mode = (page, name) => page.getByRole('tab', { name, exact: true }).click();
 test.beforeEach(async ({ page }) => { await page.goto('/'); });
+test('Laboratory top sweep presets apply the three ranked strategies without changing table rules', async ({ page }) => {
+  await mode(page, 'Laboratory');
+  const single = page.getByLabel('Top sweep strategy');
+  await expect(single.locator('option')).toHaveCount(4);
+  const before = await page.evaluate(() => BJWorkspace.store.mode('laboratory').envelope);
+  await single.selectOption('deviations-penetration');
+  const after = await page.evaluate(() => BJWorkspace.store.mode('laboratory').envelope);
+  expect(after.rules.play.mode).toBe('deviations'); expect(after.rules.bet.mode).toBe('penetration');
+  expect(after.rules.dealer).toEqual(before.rules.dealer); expect(after.fields.decks).toBe(before.fields.decks);
+  await expect(page.locator('#modeNotice')).toContainText('interval includes zero');
+  await page.getByRole('button', { name: 'Presets & transfer' }).click();
+  await page.locator('#modePreset').selectOption('labtop:deviations-linear');
+  await expect(page.locator('.preset-details')).toContainText('4.12%');
+  await page.locator('#modeToolbar').getByRole('button', { name: 'Load', exact: true }).click();
+  expect((await page.evaluate(() => BJWorkspace.store.mode('laboratory').envelope.rules.bet.mode))).toBe('linear');
+  await page.locator('#modeToolbar').getByRole('button', { name: 'Close', exact: true }).click();
+  await page.getByRole('button', { name: 'Compare multiple', exact: true }).click();
+  await page.getByLabel('Sweep preset for strategy 1').selectOption('deviations-linear');
+  await page.getByLabel('Sweep preset for strategy 2').selectOption('deviations-count-bankroll');
+  const strategies = await page.evaluate(() => BJWorkspace.store.mode('laboratory').labSettings.strategies);
+  expect(strategies.map(s => s.envelope.rules.bet.mode)).toEqual(['linear', 'countBankroll']);
+  expect(strategies.every(s => s.envelope.rules.play.mode === 'deviations')).toBe(true);
+  await page.getByRole('button', { name: 'Next: test environment →' }).click();
+  await page.getByRole('button', { name: 'Preview design →' }).click();
+  await expect(page.getByRole('heading', { name: 'Resulting experiment design' })).toBeVisible();
+});
 test('mode switching isolates settings, saves presets and transfers cloned configurations', async ({ page }) => {
   await mode(page, 'Play'); await page.getByRole('button', { name: 'New session', exact: true }).click(); await page.locator('#play-decks').fill('2'); await page.locator('#play-starting').click(); await page.locator('.mode-settings').getByRole('button', { name: 'Close', exact: true }).click();
   await page.getByRole('button', { name: 'Presets & transfer' }).click(); await page.locator('#modePresetName').fill('Two deck practice'); await page.locator('#modeToolbar').getByRole('button', { name: 'Save', exact: true }).click(); await page.locator('#modeToolbar').getByRole('button', { name: 'Close', exact: true }).click();
