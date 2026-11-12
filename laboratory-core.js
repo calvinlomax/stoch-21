@@ -35,7 +35,7 @@ const BJLab = (() => {
     seed: 91731, confidence: .95, paired: true, compare: false, controlPlay: 'basic', controlBet: 'flat',
     bankruptcy: 'stop', stopProfit: 0, stopLoss: 0, stopDrawdown: 0, tickHands: 5,
     parameters: { decks: { mode: 'choice', values: [2, 6, 8], weights: [1, 1, 1] },
-      penetration: { mode: 'uniform', min: 60, max: 85 }, 'rules.dealer.mode': { mode: 'choice', values: ['S17', 'H17'], weights: [1, 1] },
+      penetration: { mode: 'fixed' }, 'rules.dealer.mode': { mode: 'choice', values: ['S17', 'H17'], weights: [1, 1] },
       seed: { mode: 'uniform', min: 0, max: 4294967295 } }, fits: { average: true, lr: false, gam: false, sma: false }, window: 20, smoothing: 1 });
   function sample(spec, descriptor, fixed, rng) {
     const mode = spec?.mode || 'fixed';

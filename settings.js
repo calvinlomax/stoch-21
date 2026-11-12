@@ -1550,6 +1550,10 @@ const RuleSettings = (() => {
       "Playing skill and betting behavior are independent. Global defaults apply to opponents, and per-seat overrides take precedence. Disabling independent opponents makes all seats use your strategy and bet model. Error probabilities apply to decisions on totals 9–19. Streaks and progressions use the net round result across split hands and insurance; a push leaves both unchanged. New sessions reset progressions. A shoe exhaustion refunds the unfinished round. Risk tolerance multiplies the desired wager before shared limits. Progressions alter exposure; they do not alter card probabilities.",
   };
   function help(key, title) {
+    if (key === 'penetration') {
+      $('penDialog').showModal();
+      return;
+    }
     if (["shoe", "run"].includes(key)) {
       $("settingsHelpTitle").textContent = title;
       $("settingsHelpBody").replaceChildren(

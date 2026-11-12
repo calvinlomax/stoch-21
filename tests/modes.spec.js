@@ -177,6 +177,9 @@ test('Laboratory table settings offer simulator penetration modes and environmen
   await mode(page, 'Laboratory'); await page.getByRole('button', { name: 'Compare multiple', exact: true }).click();
   await page.getByRole('button', { name: 'Table Settings' }).click();
   const modeSelect = page.locator('#adv-penetrationMode'); await expect(modeSelect.locator('option')).toHaveText(['Fixed', 'Simulated', 'Gaussian']);
+  await page.locator('.advanced-field').filter({ has: modeSelect }).getByRole('button', { name: 'About Penetration %' }).click();
+  await expect(page.locator('#penDialog').getByRole('heading', { name: 'Gaussian' })).toBeVisible();
+  await page.locator('#penDialog').getByRole('button', { name: 'Close' }).click();
   await expect(page.locator('#adv-penetration')).toBeVisible(); await expect(page.locator('#adv-penetrationSigma')).toBeHidden();
   await modeSelect.selectOption('simulated'); await expect(page.locator('#adv-penetration')).toBeHidden(); await expect(page.locator('#adv-penetrationSigma')).toBeHidden();
   await modeSelect.selectOption('gaussian'); await expect(page.locator('#adv-penetrationSigma')).toBeVisible(); await page.locator('#adv-penetrationSigma').fill('4.5'); await page.locator('#advancedApply').click();
@@ -186,6 +189,46 @@ test('Laboratory table settings offer simulator penetration modes and environmen
   await more.getByLabel('Double after split distribution').selectOption('choice'); await expect(more).toHaveAttribute('open', '');
   await page.getByRole('button', { name: 'Preview design →' }).click(); await expect(page.getByRole('heading', { name: 'Resulting experiment design' })).toBeVisible();
   const download = page.waitForEvent('download'); await page.getByRole('button', { name: 'Export frozen design' }).click(); expect((await download).suggestedFilename()).toBe('blackjack-laboratory-design.json');
+});
+test('penetration modes and mathematical help work across Play, Learn, and Laboratory', async ({ page }) => {
+  const checkHelp = async field => {
+    await field.getByRole('button', { name: 'About Penetration %' }).click();
+    const dialog = page.locator('#penDialog'); await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole('heading', { name: 'Simulated' })).toBeVisible();
+    await expect(dialog.getByRole('heading', { name: 'Gaussian' })).toBeVisible();
+    await expect(dialog.locator('math')).toHaveCount(5);
+    await dialog.getByRole('button', { name: 'Close' }).click();
+  };
+  await mode(page, 'Play'); await page.getByRole('button', { name: 'New session', exact: true }).click();
+  await page.getByRole('button', { name: 'Advanced settings', exact: true }).click();
+  const play = page.locator('.field').filter({ has: page.locator('#play-penetrationMode') });
+  await expect(page.locator('#play-penetration')).toHaveValue('75'); await checkHelp(play);
+  await page.locator('#play-penetrationMode').selectOption('simulated'); await expect(page.locator('#play-penetration')).toBeHidden();
+  await page.locator('#play-penetrationMode').selectOption('gaussian'); await page.locator('#play-penetrationSigma').fill('4.5'); await page.locator('#play-penetrationSigma').blur();
+  expect((await page.evaluate(() => BJWorkspace.store.mode('play').envelope.fields)).penetrationMode).toBe('gaussian');
+  expect(+(await page.evaluate(() => BJWorkspace.store.mode('play').envelope.fields)).penetrationSigma).toBe(4.5);
+  await page.locator('.mode-settings-more').getByRole('button', { name: 'Done', exact: true }).click();
+  await page.locator('.mode-settings').getByRole('button', { name: 'Close', exact: true }).click();
+  await mode(page, 'Learn'); await page.getByRole('button', { name: 'Learning settings' }).click(); await page.getByText('Table & strategy settings').click();
+  const learn = page.locator('.field').filter({ has: page.locator('#learn-penetrationMode') }); await checkHelp(learn);
+  await page.locator('#learn-penetrationMode').selectOption('simulated');
+  expect((await page.evaluate(() => BJWorkspace.store.mode('learn').envelope.fields)).penetrationMode).toBe('simulated');
+  await page.locator('.mode-settings').getByRole('button', { name: 'Done', exact: true }).click();
+  await mode(page, 'Laboratory'); await page.getByRole('button', { name: 'Strategy & table settings' }).click();
+  const lab = page.locator('.field').filter({ has: page.locator('#laboratory-penetrationMode') }); await checkHelp(lab);
+  await page.locator('#laboratory-penetrationMode').selectOption('gaussian'); await page.locator('#laboratory-penetrationSigma').fill('6'); await page.locator('#laboratory-penetrationSigma').blur();
+  await page.locator('.mode-settings').getByRole('button', { name: 'Done', exact: true }).click();
+  await page.locator('[data-lab-step="1"]').click(); const row = page.locator('tr[data-parameter="penetration"]'); await checkHelp(row);
+  await expect(row.getByLabel('Penetration % shoe mode')).toHaveValue('gaussian');
+  await row.getByLabel('Penetration % shoe mode').selectOption('simulated');
+  await expect(row.getByLabel('Penetration % fixed value')).toBeHidden();
+  await expect(row.getByLabel('Penetration % Gaussian standard deviation')).toHaveCount(0);
+  await row.getByLabel('Penetration % shoe mode').selectOption('gaussian');
+  await expect(row.getByLabel('Penetration % fixed value')).toBeHidden();
+  const sd = page.getByLabel('Penetration % Gaussian standard deviation'); await sd.fill('4.5'); await sd.blur();
+  await page.getByRole('button', { name: 'Preview design →' }).click();
+  await expect(page.getByRole('heading', { name: 'Resulting experiment design' })).toBeVisible();
+  await expect(page.getByText('Gaussian σ 4.5 pp').first()).toBeVisible();
 });
 test('Laboratory strategy changes and Clear Results preserve or export results on request', async ({ page }) => {
   const errors = []; page.on('pageerror', error => errors.push(error.message));

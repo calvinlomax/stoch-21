@@ -166,32 +166,63 @@ const BJLaboratoryUI = (() => {
         const more = el('details', { class: 'lab-disclosure' }); more.append(api.summary('More rule, limit, count and opponent conditions'), this.parameterTable(L.PARAMETERS.slice(13)));
         section.body.append(common, more, button('Preview design →', () => { this.preview(); this.stageIndex = 2; this.refresh(); }, true)); this.content.append(section);
       }
+      syncPenetrationRows(except) {
+        for (const key of ['penetration', 'penetrationMode', 'penetrationSigma']) {
+          if (key === except) continue;
+          const old = this.content.querySelector(`tr[data-parameter="${key}"]`);
+          const descriptor = L.PARAMETERS.find(d => d.key === key);
+          if (old && descriptor) old.replaceWith(this.parameterTable([descriptor]).querySelector('tbody tr'));
+        }
+      }
       parameterTable(descriptors) {
         if (this.settings.multiEnabled) descriptors = descriptors.filter(d => d.key !== 'starting' && d.key !== 'countSystem' && (!d.key.startsWith('rules.limits.') || d.key === 'rules.limits.tableMax'));
         const table = el('table', { class: 'lab-design-table' }), head = el('thead'), tr = el('tr'); for (const title of ['Parameter', 'Distribution', 'Values / range']) tr.append(el('th', {}, title)); head.append(tr); const body = el('tbody'); table.append(head, body);
         const base = api.configuration('laboratory'); base.opponents = base.seats.filter(p => p.active && p.seat !== base.heroSeat).length; base.payout = base.rules.payout.numerator / base.rules.payout.denominator;
         for (const d of descriptors) {
-          const spec = this.settings.parameters[d.key] || { mode: 'fixed' }, row = el('tr'), name = el('td', {}, d.label); name.append(api.info(d.label, `Fixed uses the setup value. Allowed values use relative probabilities; numeric ranges support uniform, truncated normal and positive log-uniform sampling. ${d.values ? 'Allowed options: ' + d.values.join(', ') : `Supported range ${d.min}–${d.max}${d.kind === 'integer' ? ', whole numbers' : ''}`}. Rejection sampling changes the marginal distribution when combinations violate constraints; the realized design is shown before running.`, 'inference'));
+          const spec = this.settings.parameters[d.key] || { mode: 'fixed' }, row = el('tr', { 'data-parameter': d.key }), name = el('td', {}, d.label);
+          const help = api.info(d.label, `Fixed uses the setup value. Allowed values use relative probabilities; numeric ranges support uniform, truncated normal and positive log-uniform sampling. ${d.values ? 'Allowed options: ' + d.values.join(', ') : `Supported range ${d.min}–${d.max}${d.kind === 'integer' ? ', whole numbers' : ''}`}. Rejection sampling changes the marginal distribution when combinations violate constraints; the realized design is shown before running.`, 'inference');
+          if (['penetration', 'penetrationMode', 'penetrationSigma'].includes(d.key)) help.onclick = () => document.getElementById('penDialog').showModal();
+          name.append(help);
           const type = el('select', { 'aria-label': d.label + ' distribution' }); for (const [key, label] of Object.entries({ fixed: 'Fixed', choice: 'Allowed values (weighted)', ...(!d.values ? { uniform: 'Uniform range', normal: 'Truncated normal', logUniform: 'Log-uniform' } : {}) })) type.append(el('option', { value: key }, label)); type.value = spec.mode;
           type.disabled = this.running;
-          type.onchange = () => api.guarded(() => { this.settings.parameters[d.key] = type.value === 'fixed' ? { mode: 'fixed', value: L.get(base, d.key) } : type.value === 'choice' ? { mode: 'choice', values: d.values ? [...d.values] : [L.get(base, d.key)], weights: d.values ? d.values.map(() => 1) : [1] } : { mode: type.value, min: d.min, max: d.max }; api.persist(); const replacement = this.parameterTable([d]).querySelector('tbody tr'); row.replaceWith(replacement); replacement.querySelector('select')?.focus(); });
-          const modeCell = el('td'); modeCell.append(type); const values = el('td');
-          const save = value => { this.settings.parameters[d.key] = value; api.persist(); };
+          type.onchange = () => api.guarded(() => { this.settings.parameters[d.key] = type.value === 'fixed' ? { mode: 'fixed', value: L.get(base, d.key) } : type.value === 'choice' ? { mode: 'choice', values: d.values ? [...d.values] : [L.get(base, d.key)], weights: d.values ? d.values.map(() => 1) : [1] } : { mode: type.value, min: d.min, max: d.max }; api.persist(); const replacement = this.parameterTable([d]).querySelector('tbody tr'); row.replaceWith(replacement); if (['penetration', 'penetrationMode', 'penetrationSigma'].includes(d.key)) this.syncPenetrationRows(d.key); replacement.querySelector('select')?.focus(); });
+          const modeCell = el('td'); modeCell.append(type); const values = el('td'), targetFields = el('div');
+          const save = value => { this.settings.parameters[d.key] = value; api.persist(); if (['penetrationMode', 'penetrationSigma'].includes(d.key)) this.syncPenetrationRows(d.key); };
+          if (d.key === 'penetration') {
+            const modeSpec = this.settings.parameters.penetrationMode || { mode: 'fixed' };
+            const sigmaSpec = this.settings.parameters.penetrationSigma || { mode: 'fixed' };
+            const cutMode = el('select', { 'aria-label': 'Penetration % shoe mode' });
+            for (const [v, label] of [['fixed', 'Fixed'], ['simulated', 'Simulated'], ['gaussian', 'Gaussian']]) cutMode.append(el('option', { value: v }, label));
+            if (modeSpec.mode !== 'fixed') cutMode.append(el('option', { value: 'varying' }, 'Varies by environment'));
+            cutMode.value = modeSpec.mode === 'fixed' ? (modeSpec.value ?? base.penetrationMode) : 'varying'; cutMode.disabled = this.running;
+            cutMode.onchange = () => { this.settings.parameters.penetrationMode = { mode: 'fixed', value: cutMode.value }; api.persist(); this.syncPenetrationRows(); };
+            values.append(el('small', {}, 'Shoe cut mode'), cutMode);
+            targetFields.hidden = cutMode.value === 'simulated' || cutMode.value === 'gaussian';
+            type.disabled = this.running || targetFields.hidden;
+            if (cutMode.value === 'gaussian' || cutMode.value === 'varying') {
+              const sd = el('input', { type: 'number', min: 0, max: 30, step: .1, 'aria-label': 'Penetration % Gaussian standard deviation' });
+              sd.value = sigmaSpec.mode === 'fixed' ? (sigmaSpec.value ?? base.penetrationSigma) : '';
+              sd.disabled = this.running || sigmaSpec.mode !== 'fixed';
+              sd.onchange = () => api.guarded(() => { if (!sd.value.trim() || !sd.checkValidity()) { sd.reportValidity(); return; } this.settings.parameters.penetrationSigma = { mode: 'fixed', value: +sd.value }; api.persist(); this.syncPenetrationRows(); });
+              values.append(el('small', {}, sigmaSpec.mode === 'fixed' ? 'Gaussian σ (pp)' : 'Gaussian σ varies; edit under More conditions'), sd);
+            }
+            values.append(el('small', {}, targetFields.hidden ? 'The fixed target distribution is unused in this shoe mode.' : 'The distribution below sets the fixed cut target.'));
+          }
           if (spec.mode === 'fixed') {
             const current = Object.hasOwn(spec, 'value') ? spec.value : L.get(base, d.key);
-            if (d.values) { const input = el('select', { 'aria-label': d.label + ' fixed value' }); d.values.forEach(v => input.append(el('option', { value: String(v) }, String(v)))); input.value = String(current); input.disabled = this.running; input.onchange = () => save({ mode: 'fixed', value: d.values.find(v => String(v) === input.value) }); values.append(input); }
-            else { const input = el('input', { type: 'number', value: current, min: d.min, max: d.max, step: d.kind === 'integer' ? 1 : 'any', 'aria-label': d.label + ' fixed value' }); input.disabled = this.running; input.onchange = () => save({ mode: 'fixed', value: +input.value }); values.append(input); }
+            if (d.values) { const input = el('select', { 'aria-label': d.label + ' fixed value' }); d.values.forEach(v => input.append(el('option', { value: String(v) }, String(v)))); input.value = String(current); input.disabled = this.running; input.onchange = () => save({ mode: 'fixed', value: d.values.find(v => String(v) === input.value) }); targetFields.append(input); }
+            else { const input = el('input', { type: 'number', value: current, min: d.min, max: d.max, step: d.kind === 'integer' ? 1 : 'any', 'aria-label': d.label + ' fixed value' }); input.disabled = this.running; input.onchange = () => save({ mode: 'fixed', value: +input.value }); targetFields.append(input); }
           } else if (spec.mode === 'choice') {
             const input = el('input', { class: 'distribution-values', value: spec.values.join(', '), 'aria-label': d.label + ' allowed values' }), weights = el('input', { class: 'distribution-values', value: (spec.weights || spec.values.map(() => 1)).join(', '), 'aria-label': d.label + ' relative weights' });
             const change = () => api.guarded(() => { const strings = input.value.split(',').map(v => v.trim()), parsed = d.values ? strings.map(v => d.values.find(x => String(x) === v)) : strings.map(Number); if (parsed.some(x => x === undefined || typeof x === 'number' && !Number.isFinite(x))) throw Error('Invalid allowed value for ' + d.label); save({ mode: 'choice', values: parsed, weights: weights.value.split(',').map(Number) }); });
-            input.onchange = weights.onchange = change; input.disabled = weights.disabled = this.running; values.append(el('small', {}, 'Allowed values'), input, el('small', {}, 'Relative weights'), weights);
+            input.onchange = weights.onchange = change; input.disabled = weights.disabled = this.running; targetFields.append(el('small', {}, 'Allowed values'), input, el('small', {}, 'Relative weights'), weights);
           } else {
             for (const [key, label] of [['min', 'Min'], ['max', 'Max'], ...(spec.mode === 'normal' ? [['mean', 'Mean'], ['sd', 'SD']] : [])]) {
               const value = spec[key] ?? (key === 'mean' ? (spec.min + spec.max) / 2 : (spec.max - spec.min) / 6);
-              const input = el('input', { type: 'number', step: 'any', value, 'aria-label': d.label + ' ' + label }); input.disabled = this.running; input.onchange = () => save({ ...spec, [key]: +input.value }); values.append(el('small', {}, label), input);
+              const input = el('input', { type: 'number', step: 'any', value, 'aria-label': d.label + ' ' + label }); input.disabled = this.running; input.onchange = () => save({ ...spec, [key]: +input.value }); targetFields.append(el('small', {}, label), input);
             }
           }
-          row.append(name, modeCell, values); body.append(row);
+          values.append(targetFields); row.append(name, modeCell, values); body.append(row);
         }
         const scroll = el('div', { class: 'lab-scroll' }); scroll.append(table); return scroll;
       }
@@ -210,7 +241,7 @@ const BJLaboratoryUI = (() => {
         section.body.append(el('p', { class: 'mode-copy' }, 'Set how many environments and hands to test. Preview shows the actual sampled conditions before you run.'), grid, controls);
         if (this.previewDesign) {
           const table = el('table', { class: 'lab-results-table' }), row = el('tr'); ['Environment', 'Decks', 'Cut', 'Dealer', 'Payout', 'Bankroll', 'Table $', 'Opponents', 'Seat', 'Shoe seed'].forEach(t => row.append(el('th', {}, t))); table.append(row);
-          for (const env of this.previewDesign.environments) { const c = env.config, tr = el('tr'); [env.index + 1, c.decks, c.penetration + '% ' + c.penetrationMode, c.rules.dealer.mode + '/' + c.rules.dealer.hole, c.payout + ':1', c.starting, c.minBet + '–' + c.rules.limits.tableMax, c.opponents + ' ' + c.rules.opponents.skill, c.heroSeat + 1, c.seed].forEach(t => tr.append(el('td', {}, t))); table.append(tr); }
+          for (const env of this.previewDesign.environments) { const c = env.config, tr = el('tr'), cut = c.penetrationMode === 'fixed' ? `${c.penetration}% fixed` : c.penetrationMode === 'gaussian' ? `Gaussian σ ${c.penetrationSigma} pp` : 'Simulated'; [env.index + 1, c.decks, cut, c.rules.dealer.mode + '/' + c.rules.dealer.hole, c.payout + ':1', c.starting, c.minBet + '–' + c.rules.limits.tableMax, c.opponents + ' ' + c.rules.opponents.skill, c.heroSeat + 1, c.seed].forEach(t => tr.append(el('td', {}, t))); table.append(tr); }
           const scroll = el('div', { class: 'lab-scroll' }); scroll.append(table); section.body.append(heading('h3', 'Resulting experiment design', 'inference'), scroll, button('Export frozen design', () => api.download('blackjack-laboratory-design.json', this.previewDesign)));
         }
         this.content.append(section);

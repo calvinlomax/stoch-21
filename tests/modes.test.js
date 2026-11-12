@@ -2,6 +2,18 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const R = require('../rules'), E = require('../engine'), M = require('../modes-core'), L = require('../laboratory-core');
 const config = (extra = {}) => ({ rules: R.defaults(), decks: 6, penetration: 75, penetrationSigma: 3, penetrationMode: 'fixed', minBet: 10, baseBet: 25, starting: 10000, sessions: 1, rounds: 20, seed: 771, heroSeat: 2, countSystem: 'hiLo', finite: true, seats: M.seats(2, 10000), ...extra });
+test('Laboratory preserves fixed and randomized shoe penetration settings in its frozen design', () => {
+  const settings = { ...L.defaults(), environments: 3, sessions: 1, hands: 10 };
+  assert.deepEqual(L.defaults().parameters.penetration, { mode: 'fixed' });
+  const fixed = L.design(config(), settings);
+  assert.ok(fixed.environments.every(e => e.config.penetration === 75 && e.config.penetrationMode === 'fixed'));
+  settings.parameters.penetrationMode = { mode: 'fixed', value: 'gaussian' };
+  settings.parameters.penetrationSigma = { mode: 'fixed', value: 4.5 };
+  const gaussian = L.design(config(), settings);
+  assert.ok(gaussian.jobs.every(j => j.config.penetrationMode === 'gaussian' && j.config.penetrationSigma === 4.5));
+  settings.parameters.penetrationMode = { mode: 'choice', values: ['fixed', 'simulated'], weights: [0, 1] };
+  assert.ok(L.design(config(), settings).jobs.every(j => j.config.penetrationMode === 'simulated'));
+});
 function play(game) { while (game.prompt) game.answer(game.prompt.kind === 'bet' ? game.prompt.suggested : game.prompt.kind === 'insurance' ? false : M.advise(game.prompt, game.sim, true).action); }
 test('interactive play matches the same automated shared strategy and exact accounting', () => {
   const c = config(), interactive = new M.InteractiveSession(c, true), automated = new E.BlackjackSimulation(c);

@@ -155,7 +155,23 @@
       if (key === 'starting') for (const seat of e.seats) seat.amount = '';
     }), { id: mode + '-' + key, ...settings }));
     fields.append(heading('h3', 'Shoe & table', 'counting'));
-    root('decks', 'Decks', 'number', { min: 1, max: 8, step: 1 }); root('penetration', 'Penetration %', 'number', { min: 20, max: 95, step: .0001, category: 'counting' });
+    root('decks', 'Decks', 'number', { min: 1, max: 8, step: 1 });
+    const penetration = el('div', { class: 'field' }), penLabel = el('div', { class: 'field-label' });
+    const penInfo = info('Penetration %', null, 'counting'); penInfo.onclick = () => $('penDialog').showModal();
+    penLabel.append(el('label', { for: mode + '-penetrationMode' }, 'Penetration %'), penInfo);
+    const penGroup = el('div', { class: 'penetration-control' });
+    const fixedCut = el('input', { id: mode + '-penetration', type: 'number', min: 20, max: 95, step: .0001, 'aria-label': 'Fixed cut-card percentage' });
+    const sigma = el('input', { id: mode + '-penetrationSigma', type: 'number', min: 0, max: 30, step: .1, 'aria-label': 'Standard deviation in percentage points' });
+    const penMode = el('select', { id: mode + '-penetrationMode', 'aria-label': 'Penetration mode' });
+    for (const [key, label] of [['fixed', 'Fixed'], ['simulated', 'Simulated'], ['gaussian', 'Gaussian']]) penMode.append(el('option', { value: key }, label));
+    fixedCut.value = f.penetration; sigma.value = f.penetrationSigma; penMode.value = f.penetrationMode;
+    const hint = el('small');
+    const showPenetration = () => { fixedCut.hidden = penMode.value !== 'fixed'; sigma.hidden = penMode.value !== 'gaussian'; penGroup.classList.toggle('numeric', penMode.value !== 'simulated'); hint.textContent = { fixed: 'Fixed cut target (%)', simulated: 'Variable cut + actual rounds', gaussian: 'Gaussian σ (pp)' }[penMode.value]; };
+    for (const [input, key] of [[fixedCut, 'penetration'], [sigma, 'penetrationSigma'], [penMode, 'penetrationMode']]) input.onchange = () => guarded(() => {
+      if (!input.checkValidity() || (input.type === 'number' && !input.value.trim())) { input.reportValidity(); return; }
+      updateEnvelope(e => { e.fields[key] = input.value; }); showPenetration();
+    });
+    penGroup.append(fixedCut, sigma, penMode); penetration.append(penLabel, penGroup, hint); showPenetration(); fields.append(penetration);
     const rule = (group, key, label, opts) => fields.append(field(label, 'select', e.rules[group][key], value => updateEnvelope(e => e.rules[group][key] = value), { id: `${mode}-${group}-${key}`, options: opts, category: 'strategy' }));
     rule('dealer', 'mode', 'Dealer soft 17', { S17: 'Stand (S17)', H17: 'Hit (H17)', custom: 'Custom thresholds' });
     fields.append(field('Blackjack payout', 'select', String(e.rules.payout.numerator / e.rules.payout.denominator), value => updateEnvelope(e => e.rules.payout = { numerator: Number(value) * 100, denominator: 100 }), { options: { 1: '1 : 1', 1.2: '6 : 5', 1.5: '3 : 2', 2: '2 : 1', ...(![1, 1.2, 1.5, 2].includes(e.rules.payout.numerator / e.rules.payout.denominator) ? { [String(e.rules.payout.numerator / e.rules.payout.denominator)]: `${e.rules.payout.numerator / e.rules.payout.denominator} : 1` } : {}) }, category: 'strategy' }));
